@@ -15,8 +15,17 @@
     and limitations under the License.
 ******************************************************************************/
 
+/**
+ * \file yars.c
+ * \brief Implementation of the YARS resampler algorithm.
+ */
+
 #include "yars.h"
 
+/**
+ * \brief Kaiser window coefficients for 100 dB stopband (used by the default configuration).
+ * \internal
+ */
 YARS_CONST float _kaiser_100db[] = {
     -3.9717498422e-01,
      2.3297753334e+00,
@@ -28,6 +37,9 @@ YARS_CONST float _kaiser_100db[] = {
      1.0000000000e+00
 };
 
+/**
+ * \brief Default configuration (Kaiser window with 100 dB stopband, 79 taps).
+ */
 YARS_CONST yarsCfgSt yars_defaults = {
     .polly  = _kaiser_100db,
     .fudge  = 1.0937988033e+00,
@@ -36,43 +48,60 @@ YARS_CONST yarsCfgSt yars_defaults = {
     .npolly = 8
 };
 
-float yars_run(YARS_CONST yarsCfgSt * cfg, yarsStateSt * state, float (*input_cb)(void *), void * cbarg)
+/**
+ * \brief Perform one resampling step.
+ * \param cfg      Configuration of the filter.
+ * \param state    Resampler state.
+ * \param input_cb Callback function that returns the next input sample.
+ * \param cbarg    Argument passed to the callback.
+ * \return Next output sample.
+ *
+ * \details Implementation of the fractional‑delay resampling algorithm:
+ *          - While the phase is positive, new input samples are fetched via the callback.
+ *          - The weighted sum of the ring buffer is computed using weights that depend on the current phase shift.
+ *          - The frequency ratio is clamped to a minimum value for stability.
+ *          - The phase is updated for the next output sample.
+ */
+float yars_run(YARS_CONST yarsCfgSt * cfg,
+               yarsStateSt * state,
+               float (*input_cb)(void *),
+               void * cbarg)
 {
-    /* Read sufficient amount of input signal points */
-    while (state->phase > 0.0)
+    /* Read enough input samples */
+    while (state->phase > 0.0f)
     {
         if (++state->index >= cfg->ntaps)
         {
             state->index = 0;
         }
         state->ring[state->index] = input_cb(cbarg);
-        state->phase -= 1.0;
+        state->phase -= 1.0f;
     }
 
-    /* Filter input data */
-    float   filter_phase = state->phase + 1.0 - 0.5 * (float)(cfg->ntaps - 1);
-    float   out = 0;
+    /* Filtering */
+    float   filter_phase = state->phase + 1.0f - 0.5f * (float)(cfg->ntaps - 1);
+    float   out = 0.0f;
     int16_t j = state->index;
 
     for (int16_t i = cfg->ntaps; i > 0; i--)
     {
         out += yasr_weight(cfg, filter_phase) * state->ring[j];
 
-        filter_phase += 1.0;
+        filter_phase += 1.0f;
         if (--j < 0)
         {
             j = cfg->ntaps - 1;
         }
     }
 
-    /* Limit the ratio */
-    if (state->freq_ratio < 2.0 / cfg->ntaps)
+    /* Clamp the frequency ratio */
+    if (state->freq_ratio < 2.0f / cfg->ntaps)
     {
-        state->freq_ratio = 2.0 / cfg->ntaps;
+        state->freq_ratio = 2.0f / cfg->ntaps;
     }
 
-    /* Increase the phase */
-    state->phase += 1.0 / state->freq_ratio;
+    /* Advance phase */
+    state->phase += 1.0f / state->freq_ratio;
 
     return out;
 }
