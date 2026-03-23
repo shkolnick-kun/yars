@@ -30,6 +30,8 @@ from scipy.fft import fft
 import matplotlib.pyplot as plt
 from approx import chebyshev_approximation_even
 
+import yarspy
+
 SPEC_LEN = 1000000
 
 
@@ -65,7 +67,7 @@ def generate_filter(taps, fudge_factor, oversample, polly):
     m = np.arange(-(N - 1) / 2, (N - 1) / 2 + 1, 1.0)
 
     # Sinc kernel (ideal low‑pass)
-    f = np.sinc(m / fudge_factor / oversample)
+    f = yarspy.sinc(m / fudge_factor / oversample)
 
     # Window factor and normalised argument for the polynomial
     wf = 2.0 * oversample / N
@@ -356,7 +358,7 @@ if __name__ == "__main__":
     taps = 79
     attenuation = 100.0
     oversample = 2000
-    max_degree = 16
+    max_degree = 14
     tolerance = 5e-6
 
     config, stop_atten, stop_start, minus3db, f, m = make_filter(

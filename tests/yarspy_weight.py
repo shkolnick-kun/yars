@@ -33,12 +33,12 @@ FD_PATH = os.path.join(SRC_PATH, 'filter_design')
 sys.path.append(FD_PATH)
 from make_filter import make_filter
 
-#------------------------------------------------------------------------------
-# Build and import extension
-import pyximport
-EXT_PATH = os.path.join(os.path.join(SRC_PATH, 'src'), 'yarspy')
-sys.path.insert(0, EXT_PATH)
-pyximport.install(pyimport=True, reload_support=True)
+# #------------------------------------------------------------------------------
+# # Build and import extension
+# import pyximport
+# EXT_PATH = os.path.join(os.path.join(SRC_PATH, 'src'), 'yarspy')
+# sys.path.insert(0, EXT_PATH)
+# pyximport.install(pyimport=True, reload_support=True)
 import yarspy
 
 #==============================================================================
@@ -46,7 +46,7 @@ import yarspy
 taps = 79
 attenuation = 100.0
 oversample = 2000
-max_degree = 16
+max_degree = 14
 tolerance = 5e-6
 
 config, stop_atten, stop_start, minus3db, y_test, x_test = make_filter(
@@ -58,10 +58,10 @@ y = yarspy.weight(x_test, config)
 def error(x):
     return np.max(np.abs(y_test.astype(np.float64) - y.astype(np.float64) * x[0]))
 
-res = minimize(error, np.array([1.0]))
+res = minimize(error, np.array([1.0, 0.0]))
 
 config['polly'] *= res.x[0]
-#config['polly'][-1] += res.x[1]
+config['polly'][-1] += res.x[1]
 
 y = yarspy.weight(x_test, config)
 e = y_test - y

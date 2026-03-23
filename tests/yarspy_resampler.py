@@ -31,12 +31,12 @@ FD_PATH = os.path.join(SRC_PATH, 'doc')
 sys.path.append(FD_PATH)
 from prototype import DEFAULT_CFG
 
-#------------------------------------------------------------------------------
-# Build and import extension
-import pyximport
-EXT_PATH = os.path.join(os.path.join(SRC_PATH, 'src'), 'yarspy')
-sys.path.insert(0, EXT_PATH)
-pyximport.install(pyimport=True, reload_support=True)
+# #------------------------------------------------------------------------------
+# # Build and import extension
+# import pyximport
+# EXT_PATH = os.path.join(os.path.join(SRC_PATH, 'src'), 'yarspy')
+# sys.path.insert(0, EXT_PATH)
+# pyximport.install(pyimport=True, reload_support=True)
 import yarspy
 
 #==============================================================================

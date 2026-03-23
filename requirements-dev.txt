@@ -1,0 +1,7 @@
+Cython >= 0.29.21
+numpy >= 1.17, <2.0
+scipy >= 1.5
+mpmath
+matplotlib >= 3.3.4
+setuptools >= 51.0.0
+wheel >= 0.36.2

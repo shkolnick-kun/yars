@@ -27,6 +27,16 @@
  * \internal
  */
 YARS_CONST float _kaiser_100db[] = {
+#ifdef YARS_USE_COARSE
+    -3.9717492461e-01,
+     2.3297750950e+00,
+    -6.4596223831e+00,
+     1.1202646255e+01,
+    -1.3136842728e+01,
+     1.0229040146e+01,
+    -4.7674875259e+00,
+     9.9999994040e-01
+#else/*YARS_USE_COARSE*/
     -3.9717498422e-01,
      2.3297753334e+00,
     -6.4596233368e+00,
@@ -35,6 +45,7 @@ YARS_CONST float _kaiser_100db[] = {
      1.0229041100e+01,
     -4.7674880028e+00,
      1.0000000000e+00
+#endif/*YARS_USE_COARSE*/
 };
 
 /**
@@ -42,7 +53,11 @@ YARS_CONST float _kaiser_100db[] = {
  */
 YARS_CONST yarsCfgSt yars_defaults = {
     .polly  = _kaiser_100db,
+#ifdef YARS_USE_COARSE
+    .fudge  = 1.0889013871e+00,
+#else/*YARS_USE_COARSE*/
     .fudge  = 1.0937988033e+00,
+#endif/*YARS_USE_COARSE*/
     .window = 2.5640861277e-02,
     .ntaps  = 79,
     .npolly = 8

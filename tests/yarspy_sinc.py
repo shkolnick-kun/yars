@@ -20,10 +20,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 #==============================================================================
-import os
-import sys
+# import os
+# import sys
 
-SRC_PATH = os.path.dirname(os.path.dirname(__file__))
+# SRC_PATH = os.path.dirname(os.path.dirname(__file__))
 
 #------------------------------------------------------------------------------
 # Add filter design things to path
@@ -33,10 +33,10 @@ SRC_PATH = os.path.dirname(os.path.dirname(__file__))
 
 #------------------------------------------------------------------------------
 # Build and import extension
-import pyximport
-EXT_PATH = os.path.join(os.path.join(SRC_PATH, 'src'), 'yarspy')
-sys.path.insert(0, EXT_PATH)
-pyximport.install(pyimport=True, reload_support=True)
+# import pyximport
+# EXT_PATH = os.path.join(os.path.join(SRC_PATH, 'src'), 'yarspy')
+# sys.path.insert(0, EXT_PATH)
+# pyximport.install(pyimport=True, reload_support=True)
 import yarspy
 
 #==============================================================================
