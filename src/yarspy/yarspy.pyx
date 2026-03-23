@@ -73,7 +73,7 @@ cimport numpy as np
 import traceback as tb
 
 #==============================================================================
-def sinc(float x):
+def sinc(np.ndarray x):
     """
     Evaluate the approximated sinc function.
 
@@ -81,12 +81,21 @@ def sinc(float x):
     defined by the YARS_SINC_POLLY macro in the C code.
 
     Args:
-        x (float): Input argument.
+        x (np.ndarray): Input argument.
 
     Returns:
         float: Approximated sinc value.
     """
-    return yars_sinc(x)
+    x32 = x.astype(np.float32)
+    cdef float [::1] v_x = x32
+
+    y32 = np.zeros_like(x32)
+    cdef float [::1] v_y = y32
+
+    for i in range(len(x)):
+        v_y[i] = yars_sinc(v_x[i])
+
+    return y32
 
 #==============================================================================
 def weight(np.ndarray x, dict cfg=None):
@@ -131,7 +140,7 @@ def weight(np.ndarray x, dict cfg=None):
     return y32
 
 #==============================================================================
-cdef float _yars_input_cb(void * py_object):
+cdef float _yars_input_cb(void * py_object) noexcept:
     """
     C callback invoked by yars_run to obtain the next input sample.
 

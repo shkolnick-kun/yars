@@ -95,13 +95,14 @@ extern YARS_CONST yarsCfgSt yars_defaults;
  * \brief Coarse sinc approximation (5 coefficients).
  * \hideinitializer
  */
-#define YARS_SINC_GROBE()    \
+
+#define YARS_SINC_COARSE()   \
 do {                         \
-X( 2.0372393752e-02)         \
-Y(-1.8519412803e-01)         \
-Y( 8.0935758087e-01)         \
-Y(-1.6445131302e+00)         \
-Y( 9.9999900000e-01)         \
+X( 2.0372756182e-02)         \
+Y(-1.8519742268e-01)         \
+Y( 8.0937197953e-01)         \
+Y(-1.6445423865e+00)         \
+Y( 9.9998920619e-01)         \
 } while(0)
 
 /**
@@ -117,12 +118,14 @@ Y( 2.6121352135e-02)     \
 Y(-1.9074107598e-01)     \
 Y( 8.1174018082e-01)     \
 Y(-1.6449338599e+00)     \
-Y( 9.9999996750e-01)     \
+Y( 9.9999999447e-01)     \
 } while(0)
 
-#ifndef YARS_SINC_POLLY
+#ifdef YARS_USE_COARSE
+#define YARS_SINC_POLLY YARS_SINC_COARSE
+#else/*YARS_SINC_POLLY*/
 #define YARS_SINC_POLLY YARS_SINC_FINE
-#endif /* YARS_SINC_POLLY */
+#endif/*YARS_SINC_POLLY*/
 
 /**
  * \brief Evaluate the approximated sinc function.

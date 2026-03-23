@@ -56,11 +56,12 @@ config, stop_atten, stop_start, minus3db, y_test, x_test = make_filter(
 y = yarspy.weight(x_test, config)
 
 def error(x):
-    return np.max(np.abs(y_test - y * x))
+    return np.max(np.abs(y_test - y * x[0] - x[1]))
 
-res = minimize(error, np.array([1.0]))
+res = minimize(error, np.array([1.0, 0.0]))
 
 config['polly'] *= res.x[0]
+config['polly'][-1] += res.x[1]
 
 y = yarspy.weight(x_test, config)
 e = y_test - y
@@ -79,5 +80,8 @@ for i in range(len(config['polly'])):
 plt.plot(x_test, y, x_test, y_test)
 plt.show()
 
-plt.plot(x_test, y * np.max(np.abs(e)), x_test, e)
+plt.plot(x_test, e, x_test, y * np.max(np.abs(e)))
 plt.show()
+
+print("\nFinal errors:")
+print(np.max(e), np.min(e))

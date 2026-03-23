@@ -1,7 +1,11 @@
 def make_ext(modname, pyxfilename):
+    try:
+        from setuptools import Extension
+    except ImportError:
+        from distutils.extension import Extension
+
     from Cython.Compiler.Main import default_options
     from Cython.Build import cythonize
-    from distutils.extension import Extension
     import numpy as np
     import os
 
@@ -15,7 +19,7 @@ def make_ext(modname, pyxfilename):
     compiler_directives = {
         "language_level": 3,
         "embedsignature": True
-        }
+    }
 
     ext = Extension(modname, [pyxfilename], 
                     include_dirs=[np.get_include(), src_dir, ext_dir],

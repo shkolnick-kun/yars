@@ -40,15 +40,10 @@ pyximport.install(pyimport=True, reload_support=True)
 import yarspy
 
 #==============================================================================
-
-
 x_test = np.linspace(0, 40, 4000, dtype=np.float32)
 y_test = np.sinc(x_test)
 
-y = []
-for i in x_test:
-    y.append(yarspy.sinc(i))
-y = np.array(y)
+y = yarspy.sinc(x_test)
 
 e = y - y_test
 
