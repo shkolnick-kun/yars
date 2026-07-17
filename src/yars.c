@@ -1,4 +1,4 @@
-/*******************************************************************************
+/******************************************************************************
     Copyright 2026 anonimous <shkolnick-kun@gmail.com> and contributors.
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -100,7 +100,7 @@ float yars_run(YARS_CONST yarsCfgSt * cfg,
 
     for (int16_t i = cfg->ntaps; i > 0; i--)
     {
-        out += yasr_weight(cfg, filter_phase) * state->ring[j];
+        out += yars_weight(cfg, filter_phase) * state->ring[j];
 
         filter_phase += 1.0f;
         if (--j < 0)
@@ -109,14 +109,148 @@ float yars_run(YARS_CONST yarsCfgSt * cfg,
         }
     }
 
-    /* Clamp the frequency ratio */
+    /* Clamp the frequency ratio (f_in / f_out) to avoid excessive decimation */
     if (state->freq_ratio < 2.0f / cfg->ntaps)
     {
         state->freq_ratio = 2.0f / cfg->ntaps;
     }
 
     /* Advance phase */
-    state->phase += 1.0f / state->freq_ratio;
+    state->phase += state->freq_ratio;
 
     return out;
+}
+
+/*===========================================================================*/
+/*                      Fixed math implementation                            */
+/*===========================================================================*/
+
+/*Default configuration*/
+#ifdef YARS_USE_COARSE
+#define _KAISER_QN_100DB \
+X(0,  -852926656, 31)    \
+X(1,  1250788480, 29)    \
+X(2, -1733991680, 28)    \
+X(3,  1503593727, 27)    \
+X(4, -1763197185, 27)    \
+X(5,  1372918528, 27)    \
+X(6, -1279762688, 28)    \
+X(7,  1073741760, 30)
+#else/*ARS_USE_COARSE*/
+#define _KAISER_QN_100DB \
+X(0,  -852926785, 31)    \
+X(1,  1250788607, 29)    \
+X(2, -1733991937, 28)    \
+X(3,  1503593984, 27)    \
+X(4, -1763197440, 27)    \
+X(5,  1372918656, 27)    \
+X(6, -1279762817, 28)    \
+X(7,  1073741824, 30)
+#endif/*YARS_USE_COARSE*/
+
+#define _KAISER_QN_ID(i) _KAISER_QN_ID_##i
+typedef enum {
+#define X(id, num, dig) _KAISER_QN_ID(id),
+    _KAISER_QN_100DB
+#undef X
+    _KAISER_QN_ID_LIM
+} _kaiserQn100bdIdEn;
+
+
+static YARS_CONST int32_t _kaiser_qn_100db[] = {
+#define X(i, Ai, FDAi) Ai,
+    _KAISER_QN_100DB
+#undef X
+};
+
+static YARS_CONST int8_t _fd_kaiser_qn_100db[] = {
+#define X(i, Ai, FDAi) FDAi,
+    _KAISER_QN_100DB
+#undef X
+};
+
+YARS_CONST yarsQnCfgSt yars_qn_defaults = {
+    .polly     = _kaiser_qn_100db,
+    .fd_polly  = _fd_kaiser_qn_100db,
+#ifdef YARS_USE_COARSE
+    .fudge     = 1169198961, /*TODO: Fine tuning!*/
+#else/*YARS_USE_COARSE*/
+    .fudge     = 1174457300, /*1174457522*/
+#endif/*YARS_USE_COARSE*/
+    .window    = 55063330,
+    .ntaps     = 79,
+    .npolly    = 8,
+    .fd_fudge  = 30,
+    .fd_window = 31,
+};
+
+/**
+ * \brief Perform one resampling step using fixed-point arithmetic.
+ * \param cfg      Configuration of the filter (fixed-point).
+ * \param state    Resampler state (fixed-point).
+ * \param input_cb Callback that returns the next input sample as int32_t in Q1.30.
+ * \param cbarg    Argument passed to the callback.
+ * \return Next output sample as int32_t in Q1.30.
+ *
+ * \details This function mirrors the behaviour of yars_run() but uses
+ *          fixed-point numbers. Input samples must be in Q1.30 format,
+ *          output is also in Q1.30. Phase and step are stored in Q8.24.
+ */
+int32_t yars_run_qn(YARS_CONST yarsQnCfgSt * cfg,
+                    yarsQnStateSt * state,
+                    int32_t (*input_cb)(void *),
+                    void * cbarg)
+{
+    const int32_t ONE_Q24 = 1 << 24;          /* 1.0 in Q8.24 */
+    const int32_t HALF_Q24 = 1 << 23;         /* 0.5 in Q8.24 */
+
+    /* Read enough input samples while phase > 0 */
+    while (state->phase > 0)
+    {
+        if (++state->index >= cfg->ntaps)
+        {
+            state->index = 0;
+        }
+        state->ring[state->index] = input_cb(cbarg);  /* Q0.31 sample */
+        state->phase -= ONE_Q24;                      /* subtract 1.0 */
+    }
+
+    /* Filtering */
+    int32_t filter_phase = state->phase + ONE_Q24 - ((cfg->ntaps - 1) * HALF_Q24);
+    int64_t acc = 0;
+    int16_t j = state->index;
+
+    for (int16_t i = cfg->ntaps; i > 0; i--)
+    {
+        acc += _weight_qn(cfg, filter_phase) * state->ring[j]; /* Q1.61 */
+        filter_phase += ONE_Q24;                               /* +1.0 */
+        if (--j < 0)
+        {
+            j = cfg->ntaps - 1;
+        }
+    }
+
+    /* Clamp the frequency ratio (f_in / f_out) to avoid excessive decimation */
+    int32_t min_freq_ratio = (2 << 24) / cfg->ntaps;  /* 2/ntaps in Q8.24 */
+    if (state->freq_ratio < min_freq_ratio)
+    {
+        state->freq_ratio = min_freq_ratio;
+    }
+
+    /* Advance phase */
+    state->phase += state->freq_ratio;
+
+    int64_t out = mul_2pwr(acc, -30);
+
+    if (out >= INT32_MAX)
+    {
+        out = INT32_MAX;
+    }
+
+    if (out <= INT32_MIN)
+    {
+        out = INT32_MIN;
+    }
+
+    return (int32_t)out;
 }
