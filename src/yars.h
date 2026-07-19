@@ -83,9 +83,9 @@ typedef struct {
  */
 typedef struct {
     YARS_CONST float *  poly;    /**< Coefficients of the window polynomial */
-    YARS_CONST float    fudge;    /**< Scaling factor (multiplier) for sinc correction */
-    YARS_CONST float    window;   /**< Window scaling factor */
-    YARS_CONST uint16_t ntaps;    /**< Number of filter taps */
+    YARS_CONST float    fudge;   /**< Scaling factor (multiplier) for sinc correction */
+    YARS_CONST float    window;  /**< Window scaling factor */
+    YARS_CONST uint16_t ntaps;   /**< Number of filter taps */
     YARS_CONST uint8_t  npoly;   /**< Length of the window polynomial (number of coefficients) */
 } yarsCfgF32St;
 
@@ -185,7 +185,7 @@ float yars_f32_run(YARS_CONST yarsCfgF32St * cfg,
                    void * cbarg);
 
 /*===========================================================================*/
-/*                      Fixed‑point (i32) API                               */
+/*                      Fixed‑point (i32) API                                */
 /*===========================================================================*/
 
 /**
@@ -268,10 +268,10 @@ typedef struct {
     YARS_CONST int32_t   window;   /**< Window scaling factor */
 
     YARS_CONST uint16_t  ntaps;    /**< Number of filter taps */
-    YARS_CONST uint8_t   npoly;   /**< Length of the window polynomial (number of coefficients) */
+    YARS_CONST uint8_t   npoly;    /**< Length of the window polynomial (number of coefficients) */
 
     /* Numbers of fractional binary digits */
-    YARS_CONST int8_t    fd_fudge; /**< Fractional bits for fudge */
+    YARS_CONST int8_t    fd_fudge;  /**< Fractional bits for fudge */
     YARS_CONST int8_t    fd_window; /**< Fractional bits for window */
 } yarsCfgI32St;
 
@@ -281,7 +281,7 @@ extern YARS_CONST yarsCfgI32St yars_i32_defaults;
 #define L32(n, i) (((int32_t)n) << (i))
 
 /*---------------------------------------------------------------------------*/
-static inline int64_t mul_2pwr(int64_t x, int8_t pwr)
+static inline int64_t mul_2pwr32(int64_t x, int8_t pwr)
 {
     uint64_t ax  = (x >= 0         ) ? x              : -x;
     uint64_t sax = (pwr >= 0       ) ? ax << pwr      : ax >> (-pwr);
@@ -313,7 +313,7 @@ static inline int64_t _yars_i32_poly(int64_t x,
 
         result[i] = a[i] + result[i-1] * x * 2**(fda[i] - fda[i - 1] - fdx)
         */
-        result = a[i] + mul_2pwr(result * x, fda[i] - fda[i - 1] - fdx);
+        result = a[i] + mul_2pwr32(result * x, fda[i] - fda[i - 1] - fdx);
     }
     return result;
 }
@@ -337,10 +337,10 @@ static inline int64_t _yars_i32_sinc(int32_t x24)
 #undef X
     };
 
-    int32_t ix   = 31  - (((L32(1, 30) - x24) - L32(1, 24)) >> 25);
-    int64_t fx24 = x24 - (ix << 25);     /* fx24 is Q24 */
-    int64_t fx2  = (fx24 * fx24)  >> 17; /* fx2  is Q31 */
-    int64_t x    = ((int64_t)x24) << 7;  /* x    is Q31 */
+    int64_t ix   = 31  - mul_2pwr32(L32(1, 30) - L32(1, 24) - x24, -25);
+    int64_t fx24 = x24 - mul_2pwr32(ix, 25);     /* fx24 is Q24 */
+    int64_t fx2  = mul_2pwr32(fx24 * fx24, -17); /* fx2  is Q31 */
+    int64_t x    = mul_2pwr32(x24, 7);           /* x    is Q31 */
 
     int64_t out  = _yars_i32_poly(fx2, 31, A, FDA, YARS_SINC_I32_ID_LIM);
 
@@ -361,17 +361,17 @@ static inline int32_t yars_i32_sinc(int32_t x24)
 static inline int64_t _yars_i32_weight_calc(YARS_CONST yarsCfgI32St * cfg, int32_t x24)
 {
     // Multiply x by fudge_real (fudge / 2^{fd_fudge})
-    int64_t xs24 = mul_2pwr(((int64_t)x24) * cfg->fudge, -cfg->fd_fudge);
+    int64_t xs24 = mul_2pwr32(((int64_t)x24) * cfg->fudge, -cfg->fd_fudge);
     int64_t sinc = _yars_i32_sinc(xs24);
 
-    int64_t xw31 = mul_2pwr(((int64_t)x24) * ((int64_t)cfg->window), 7 - cfg->fd_window);
-    int64_t fx2  = mul_2pwr(xw31 * xw31, -31);
+    int64_t xw31 = mul_2pwr32(((int64_t)x24) * ((int64_t)cfg->window), 7 - cfg->fd_window);
+    int64_t fx2  = mul_2pwr32(xw31 * xw31, -31);
     int64_t poly = _yars_i32_poly(fx2, 31, cfg->poly, cfg->fd_poly, cfg->npoly);
 
     // Multiply poly by fudge_real
-    poly = mul_2pwr(poly * cfg->fudge, -cfg->fd_fudge);
+    poly = mul_2pwr32(poly * cfg->fudge, -cfg->fd_fudge);
 
-    return mul_2pwr(sinc * poly, -cfg->fd_poly[cfg->npoly - 1]);
+    return mul_2pwr32(sinc * poly, -cfg->fd_poly[cfg->npoly - 1]);
 }
 
 static inline int32_t yars_i32_weight(YARS_CONST yarsCfgI32St * cfg, int32_t x24)
@@ -383,9 +383,9 @@ static inline int32_t yars_i32_weight(YARS_CONST yarsCfgI32St * cfg, int32_t x24
  * \brief Perform one resampling step (i32).
  * \param cfg      Configuration of the filter (fixed‑point).
  * \param state    Resampler state (fixed‑point).
- * \param input_cb Callback that returns the next input sample as int32_t in Q1.30.
+ * \param input_cb Callback that returns the next input sample as int32_t.
  * \param cbarg    Argument passed to the callback.
- * \return Next output sample as int32_t in Q1.30.
+ * \return Next output sample as int32_t.
  */
 int32_t yars_i32_run(YARS_CONST yarsCfgI32St * cfg,
                      yarsStateI32St * state,

@@ -39,7 +39,6 @@ YARS_CONST float _kaiser_100db_f32[] = {
 
 /**
  * \brief Default configuration (f32) – Kaiser window with 100 dB stopband, 79 taps.
- *        fudge = 1 / 1.0937988033 ≈ 0.914244920531081
  */
 YARS_CONST yarsCfgF32St yars_f32_defaults = {
     .poly     = _kaiser_100db_f32,
@@ -139,8 +138,8 @@ static YARS_CONST int8_t _fd_kaiser_i32_100db[] = {
 YARS_CONST yarsCfgI32St yars_i32_defaults = {
     .poly     = _kaiser_i32_100db,
     .fd_poly  = _fd_kaiser_i32_100db,
-    .fudge     = 981663008,   /* 0.914244920531081 * 2^30 ≈ 981663008 */
-    .window    = 55063330,    /* 0.025640861277 * 2^31 ≈ 55063330 */
+    .fudge     = 981663008,
+    .window    = 55063330,
     .ntaps     = 79,
     .npoly    = 8,
     .fd_fudge  = 30,
@@ -151,17 +150,17 @@ YARS_CONST yarsCfgI32St yars_i32_defaults = {
  * \brief Perform one resampling step using fixed‑point arithmetic (i32).
  * \param cfg      Configuration of the filter (fixed‑point).
  * \param state    Resampler state (fixed‑point).
- * \param input_cb Callback that returns the next input sample as int32_t in Q1.30.
+ * \param input_cb Callback that returns the next input sample as int32_t.
  * \param cbarg    Argument passed to the callback.
- * \return Next output sample as int32_t in Q1.30.
+ * \return Next output sample as int32_t.
  */
 int32_t yars_i32_run(YARS_CONST yarsCfgI32St * cfg,
                      yarsStateI32St * state,
                      int32_t (*input_cb)(void *),
                      void * cbarg)
 {
-    const int32_t ONE_Q24 = 1 << 24;          /* 1.0 in Q8.24 */
-    const int32_t HALF_Q24 = 1 << 23;         /* 0.5 in Q8.24 */
+    const int32_t ONE_Q24 = 1 << 24;          /* 1.0 in Q24 */
+    const int32_t HALF_Q24 = 1 << 23;         /* 0.5 in Q24 */
 
     /* Read enough input samples while phase > 0 */
     while (state->phase > 0)
@@ -170,7 +169,7 @@ int32_t yars_i32_run(YARS_CONST yarsCfgI32St * cfg,
         {
             state->index = 0;
         }
-        state->ring[state->index] = input_cb(cbarg);  /* Q1.30 sample */
+        state->ring[state->index] = input_cb(cbarg);  /* Q31 sample */
         state->phase -= ONE_Q24;                      /* subtract 1.0 */
     }
 
@@ -181,7 +180,7 @@ int32_t yars_i32_run(YARS_CONST yarsCfgI32St * cfg,
 
     for (int16_t i = cfg->ntaps; i > 0; i--)
     {
-        acc += _yars_i32_weight_calc(cfg, filter_phase) * state->ring[j]; /* Q1.61 */
+        acc += _yars_i32_weight_calc(cfg, filter_phase) * state->ring[j]; /* Q61 */
         filter_phase += ONE_Q24;                               /* +1.0 */
         if (--j < 0)
         {
@@ -190,7 +189,7 @@ int32_t yars_i32_run(YARS_CONST yarsCfgI32St * cfg,
     }
 
     /* Clamp the frequency ratio (f_in / f_out) to avoid excessive decimation */
-    int32_t min_freq_ratio = (2 << 24) / cfg->ntaps;  /* 2/ntaps in Q8.24 */
+    int32_t min_freq_ratio = (2 << 24) / cfg->ntaps;  /* 2/ntaps in Q24 */
     if (state->freq_ratio < min_freq_ratio)
     {
         state->freq_ratio = min_freq_ratio;
@@ -199,7 +198,7 @@ int32_t yars_i32_run(YARS_CONST yarsCfgI32St * cfg,
     /* Advance phase */
     state->phase += state->freq_ratio;
 
-    int64_t out = mul_2pwr(acc, -30);
+    int64_t out = mul_2pwr32(acc, -30);
 
     if (out >= INT32_MAX)
     {
