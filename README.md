@@ -163,14 +163,14 @@ It is written in C and provides a convenient Cython wrapper for Python, integrat
         double dt;          /* input sample period (1/f_in) */
         double freq;        /* sine frequency (Hz) */
     } sine_gen_t;
-    
+
     float input_callback(void *arg) {
         sine_gen_t *gen = (sine_gen_t *)arg;
         float sample = (float)sin(2.0 * M_PI * gen->freq * gen->t);
         gen->t += gen->dt;          /* advance time */
         return sample;
     }
-    
+
     /* ------------------------------------------------------------
      * Main program
      * ------------------------------------------------------------ */
@@ -178,33 +178,33 @@ It is written in C and provides a convenient Cython wrapper for Python, integrat
         /* Signal parameters */
         const double f_in  = 8000.0;     /* input sample rate (Hz) */
         const double f_out = 16000.0;    /* output sample rate (Hz) */
-        const double ratio = f_out / f_in;  /* resampling ratio = 2.0 */
-    
+        const double ratio = f_in / f_out;   /* = 0.5 (f_in / f_out) */
+
         /* Ring buffer — default size (79) */
-        YARS_DEFAULT_RING(ring_buf);    /* declares array float ring_buf[79] */
-    
+        YARS_F32_DEFAULT_RING(ring_buf);    /* declares array float ring_buf[79] */
+
         /* Initialise resampler state */
-        yarsStateSt state = YARS_STAE_INITIALIZER(ring_buf, ratio);
-    
+        yarsStateF32St state = YARS_F32_STATE_INITIALIZER(ring_buf, (float)ratio);
+
         /* 440 Hz sine wave generator */
         sine_gen_t generator = {
             .t    = 0.0,
             .dt   = 1.0 / f_in,
             .freq = 440.0
         };
-    
+
         /* Number of output samples to generate */
         const int output_samples = 200;
-    
+
         /* Use default configuration (Kaiser window 100 dB, 79 taps) */
-        const yarsCfgSt *cfg = &yars_defaults;
-    
+        const yarsCfgF32St *cfg = &yars_f32_defaults;
+
         /* Generate output samples */
         for (int i = 0; i < output_samples; ++i) {
-            float out = yars_run(cfg, &state, input_callback, &generator);
+            float out = yars_f32_run(cfg, &state, input_callback, &generator);
             printf("%f\n", out);
         }
-    
+
         return 0;
     }
     ```
