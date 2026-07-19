@@ -43,7 +43,7 @@ import yarspy
 x_test = np.linspace(0, 40, 4000, dtype=np.float32)
 y_test = np.sinc(x_test)
 
-y = yarspy.sinc(x_test)
+y = yarspy.sinc(x_test, use_fixed=True)
 
 e = y - y_test
 

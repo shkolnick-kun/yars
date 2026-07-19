@@ -18,21 +18,19 @@ limitations under the License.
 
 Resampler module: a sample rate converter using a windowed sinc interpolator.
 The filter coefficients are defined by a polynomial that approximates a Kaiser
-window with 100 dB sidelobe attenuation. The implementation follows the same
-API as the C version with Cython bindings.
+window with 100 dB sidelobe attenuation.
 """
 
 import numpy as np
 
 # -----------------------------------------------------------------------------
-# Default configuration (matches the C implementation)
+# Default configuration
 # -----------------------------------------------------------------------------
 DEFAULT_CFG = {
-    'fudge': 1.08947476744651794434,
-    'window': 0.02564069691414212759,
+    'fudge': 0.914244920531081,
+    'window': 0.025640861277,
     'ntaps': 79,
-    # Polynomial coefficients in descending order (suitable for Horner's scheme).
-    'polly': np.array([
+    'poly': np.array([
         0.13379795737644664677,  # degree 16
         -0.93236506483873515805, # degree 14
         3.199451818376378931,    # degree 12
@@ -96,13 +94,14 @@ class Resampler:
     the window scale factor and the number of taps (filter length).
 
     Attributes:
-        fudge (float): Sinc scaling factor.
+        fudge (float): Sinc scaling multiplier.
         window (float): Window scaling factor.
         ntaps (int): Number of filter taps (ring buffer length).
-        polly (numpy.ndarray): Polynomial coefficients for the Kaiser window
+        poly (numpy.ndarray): Polynomial coefficients for the Kaiser window
             approximation (descending order).
         input_cb (callable): Callback that provides the next input sample.
         ratio (float): Resampling ratio (output sample rate / input sample rate).
+            This is the inverse of the ratio used in the C implementation.
         ring (numpy.ndarray): Circular buffer for past input samples.
         index (int): Current write position in the ring buffer.
         phase (float): Internal phase accumulator (fractional output sample index).
@@ -116,9 +115,10 @@ class Resampler:
                 (float) each time it is called. It will be called repeatedly
                 as needed.
             ratio (float): Desired resampling ratio = f_out / f_in.
+                Note: This is the inverse of the ratio used in the C version.
             cfg (dict, optional): Configuration dictionary. If not provided,
                 the default configuration (DEFAULT_CFG) is used. The dictionary
-                must contain the keys 'fudge', 'window', 'ntaps', and 'polly'.
+                must contain the keys 'fudge', 'window', 'ntaps', and 'poly'.
 
         Raises:
             ValueError: If input_cb is not callable.
@@ -130,9 +130,10 @@ class Resampler:
         self.fudge = float(cfg['fudge'])
         self.window = float(cfg['window'])
         self.ntaps = int(cfg['ntaps'])
-        self.polly = np.asarray(cfg['polly'], dtype=np.float32)
+        self.poly = np.asarray(cfg['poly'], dtype=np.float32)
 
         # Ensure the ratio is at least the minimum required value.
+        # In this prototype ratio = f_out/f_in, so minimum is ntaps/2.
         min_ratio = 2.0 / self.ntaps
         if ratio < min_ratio:
             print(f"Warning: ratio must be >= {min_ratio:.4e}. Using {min_ratio:.4e}.")
@@ -148,7 +149,7 @@ class Resampler:
         """Compute the filter weight for a given fractional phase offset.
 
         The weight is the product of the sinc approximation and the window
-        polynomial, scaled by the fudge factor.
+        polynomial, scaled by the fudge factor (now a multiplier).
 
         Args:
             x (float): Phase offset (relative to the centre of the filter).
@@ -156,12 +157,14 @@ class Resampler:
         Returns:
             float: Filter coefficient for the given phase.
         """
-        sinc_val = _rsm_sinc(x / self.fudge)
+        # sinc(x * fudge)  because fudge is now a multiplier
+        sinc_val = _rsm_sinc(x * self.fudge)
         y = x * self.window
         # Evaluate the polynomial at (y^2). The coefficients are in descending
         # order, so we can directly pass them to np.polyval.
-        window_val = np.polyval(self.polly, y * y)
-        return sinc_val * window_val / self.fudge
+        window_val = np.polyval(self.poly, y * y)
+        # Multiply by fudge (instead of dividing)
+        return sinc_val * window_val * self.fudge
 
     def __call__(self):
         """Generate the next output sample.
@@ -195,7 +198,7 @@ class Resampler:
                 j = self.ntaps - 1
 
         # Advance the output phase.
-        self.phase += 1.0 / self.ratio
+        self.phase += self.ratio
         return out
 
 
@@ -221,7 +224,8 @@ if __name__ == "__main__":
         return ret
 
     # Use a ratio slightly above the minimum to avoid clipping.
-    ratio = 15 / DEFAULT_CFG['ntaps']
+    # Here ratio = f_out/f_in, so minimum is ntaps/2 ≈ 39.5
+    ratio = 4.0
 
     resample = Resampler(_input_cb, ratio)
 
@@ -230,7 +234,8 @@ if __name__ == "__main__":
         y.append(resample())
 
     y = np.array(y)
-    py = np.array([0.001 * i for i in range(len(y))]) * f / ratio
+    # Time scale for output: original time step 0.001, scaled by ratio (f_out/f_in)
+    py = np.array([0.001 * i for i in range(len(y))]) * ratio * f
 
     plt.plot(px, x, '.-', label='Input')
     plt.plot(py, y, '*-', label='Resampled')

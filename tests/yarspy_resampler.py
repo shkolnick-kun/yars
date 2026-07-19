@@ -29,7 +29,6 @@ SRC_PATH = os.path.dirname(os.path.dirname(__file__))
 # Add filter design things to path
 FD_PATH = os.path.join(SRC_PATH, 'doc')
 sys.path.append(FD_PATH)
-from prototype import DEFAULT_CFG
 
 # #------------------------------------------------------------------------------
 # # Build and import extension
@@ -57,16 +56,16 @@ def _input_cb(*args):
     cur += 1
     return ret
 
-ratio = 1 / np.pi / 2
+ratio = np.pi * 2
 
-resample_x = yarspy.Resampler(_input_cb, ratio, DEFAULT_CFG)
+resample_x = yarspy.Resampler(_input_cb, ratio)
 
 yl = []
 while cur < len(x):
     yl.append(resample_x())
 
 y = np.array(yl)
-py = np.array([0.001 * i for i in range(len(y))]) * f / ratio
+py = np.array([0.001 * i for i in range(len(y))]) * f * ratio
 
 plt.plot(px, x, '.-', label='Input')
 plt.plot(py, y, '*-', label='Resampled')

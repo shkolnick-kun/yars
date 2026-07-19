@@ -5,6 +5,6 @@
 
 int main()
 {
-    printf("%f \n", yasr_weight(&yars_defaults, 0));
+    printf("%f \n", yars_f32_weight(&yars_f32_defaults, 0));
     return 0;
 }

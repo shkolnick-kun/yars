@@ -35,7 +35,7 @@ import yarspy
 SPEC_LEN = 1000000
 
 
-def generate_filter(taps, fudge_factor, oversample, polly):
+def generate_filter(taps, fudge, oversample, poly):
     """
     Generate the impulse response of a low‑pass windowed sinc filter.
 
@@ -44,9 +44,9 @@ def generate_filter(taps, fudge_factor, oversample, polly):
 
     Args:
         taps (int): Number of filter taps (must be odd for a symmetric filter).
-        fudge_factor (float): Scaling factor for the sinc function.
+        fudge (float): Scaling multiplier for sinc.
         oversample (int): Oversampling factor used for filter design.
-        polly (numpy.ndarray): Polynomial coefficients in descending order
+        poly (numpy.ndarray): Polynomial coefficients in descending order
             (e.g., [a_n, a_{n-1}, ..., a_0]) evaluated at (x²) to obtain
             the window value.
 
@@ -66,13 +66,13 @@ def generate_filter(taps, fudge_factor, oversample, polly):
     # Indices for the sinc function (centred)
     m = np.arange(-(N - 1) / 2, (N - 1) / 2 + 1, 1.0)
 
-    # Sinc kernel (ideal low‑pass)
-    f = yarspy.sinc(m / fudge_factor / oversample)
+    # Sinc kernel (ideal low‑pass) using fudge as multiplier
+    f = yarspy.sinc(m * fudge / oversample)
 
     # Window factor and normalised argument for the polynomial
     wf = 2.0 * oversample / N
     arg = (m / oversample) * wf          # in [-1, 1]
-    window_val = np.polyval(polly, arg * arg)   # polynomial in (arg²)
+    window_val = np.polyval(poly, arg * arg)   # polynomial in (arg²)
 
     # Apply window and normalise to unit sum
     f = f * window_val
@@ -219,7 +219,7 @@ def plot_filter(f, atten, stop_band_start, minus3db, target, filename=None):
         return fig
 
 
-def make_filter(taps, attenuation, oversample=1000, max_polly_degree=16,
+def make_filter(taps, attenuation, oversample=1000, max_poly_degree=16,
                 tolerance=1e-6):
     """
     Design a low‑pass filter for a windowed‑sinc resampler.
@@ -233,7 +233,7 @@ def make_filter(taps, attenuation, oversample=1000, max_polly_degree=16,
         taps (int): Number of filter taps (ntaps). Should be odd.
         attenuation (float): Desired stop‑band attenuation (dB).
         oversample (int): Oversampling factor used in design (default 1000).
-        max_polly_degree (int): Maximum polynomial degree in the variable y
+        max_poly_degree (int): Maximum polynomial degree in the variable y
             (where the polynomial is evaluated at y²). Default 16.
         tolerance (float): Maximum absolute error allowed in the polynomial
             approximation of the Kaiser window. Default 1e-6.
@@ -241,10 +241,10 @@ def make_filter(taps, attenuation, oversample=1000, max_polly_degree=16,
     Returns:
         tuple:
             config (dict): Resampler configuration containing:
-                - 'fudge' (float): fudge factor.
+                - 'fudge' (float): scaling multiplier for sinc.
                 - 'window' (float): window factor.
                 - 'ntaps' (int): number of filter taps.
-                - 'polly' (numpy.ndarray): polynomial coefficients in
+                - 'poly' (numpy.ndarray): polynomial coefficients in
                   descending order (float32).
             stop_atten (float): Achieved stop‑band attenuation (dB).
             stop_start (float): Normalised stop‑band start frequency.
@@ -266,25 +266,26 @@ def make_filter(taps, attenuation, oversample=1000, max_polly_degree=16,
     # Obtain Chebyshev approximation coefficients (lowest power first)
     # The function is even, so we use chebyshev_approximation_even.
     _, coeffs, _, _ = chebyshev_approximation_even(
-        window_func, max_degree=max_polly_degree, tolerance=tolerance
+        window_func, max_degree=max_poly_degree, tolerance=tolerance
     )
     # Convert to float32 and reverse order (highest power first)
-    polly = coeffs[::-2].astype(np.float32)
+    poly = coeffs[::-2].astype(np.float32)
 
     # ----------------------------------------------------------------------
-    # Adjust fudge_factor so that the stop‑band edge matches the target
+    # Adjust fudge so that the stop‑band edge matches the target
     # ----------------------------------------------------------------------
-    # Initial guesses
+    # Initial guesses: fudge values (multipliers)
+    # At fudge=1.0, stop_start is > target; at fudge=0.8, stop_start < target.
     fudge1 = 1.0
-    f1, m1, wf = generate_filter(taps, fudge1, oversample, polly)
+    f1, m1, wf = generate_filter(taps, fudge1, oversample, poly)
     stop_atten1, stop_start1, minus3db1 = measure_filter(f1, attenuation)
 
-    fudge2 = 1.25
-    f2, m2, wf = generate_filter(taps, fudge2, oversample, polly)
+    fudge2 = 0.75
+    f2, m2, wf = generate_filter(taps, fudge2, oversample, poly)
     stop_atten2, stop_start2, minus3db2 = measure_filter(f2, attenuation)
 
-    print(f"    fudge_factor: {fudge1:.10f}   stop_band_start: {stop_start1:.10f}   1")
-    print(f"    fudge_factor: {fudge2:.10f}   stop_band_start: {stop_start2:.10f}   2")
+    print(f"    fudge: {fudge1:.10f}   stop_band_start: {stop_start1:.10f}   1")
+    print(f"    fudge: {fudge2:.10f}   stop_band_start: {stop_start2:.10f}   2")
 
     f = f1
     stop_atten = stop_atten1
@@ -296,7 +297,7 @@ def make_filter(taps, attenuation, oversample=1000, max_polly_degree=16,
     # Binary search to bring stop_band_start to target
     while (stop_start1 - stop_start2) > 1e-10:
         fudge = (fudge1 + fudge2) / 2
-        f, m, wf = generate_filter(taps, fudge, oversample, polly)
+        f, m, wf = generate_filter(taps, fudge, oversample, poly)
         stop_atten, stop_start, minus3db = measure_filter(f, attenuation)
 
         if stop_start1 < stop_start2:
@@ -323,7 +324,7 @@ def make_filter(taps, attenuation, oversample=1000, max_polly_degree=16,
             fudge1 = fudge
             choice = 1
 
-        print(f"    fudge_factor: {fudge:.10f}   stop_band_start: {stop_start:.10f}   {choice}  delta: {stop_start1-stop_start2:.3e}")
+        print(f"    fudge: {fudge:.10f}   stop_band_start: {stop_start:.10f}   {choice}  delta: {stop_start1-stop_start2:.3e}")
 
     # Output statistics
     N = len(f)
@@ -332,12 +333,11 @@ def make_filter(taps, attenuation, oversample=1000, max_polly_degree=16,
     print(f"#   Stop band atten. : {abs(stop_atten):.2f} dB")
     print(f"#   -3dB band width  : {oversample * minus3db / 0.5:.3f}")
     print(f"#   length           : {taps}")
-    print(f"#   Fudge factor     : {fudge:.10e}")
+    print(f"#   Fudge (multiplier): {fudge:.10e}")
     print(f"#   Window factor    : {wf:.10e}")
-    print(f"#   Polly            : {len(polly)}")
-    for i in range(len(polly)):
-        print(f"#   [{i}] = {polly[i]:.10e}")
-
+    print(f"#   Polly            : {len(poly)}")
+    for i in range(len(poly)):
+        print(f"#   [{i}] = {poly[i]:.10e}")
 
     # Scaled version of the filter (useful for plotting)
     f_scaled = f * oversample
@@ -347,7 +347,7 @@ def make_filter(taps, attenuation, oversample=1000, max_polly_degree=16,
         'fudge': float(fudge),
         'window': float(wf),
         'ntaps': int(taps),
-        'polly': polly
+        'poly': poly
     }
 
     return config, stop_atten, stop_start, minus3db, f_scaled, m

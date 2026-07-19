@@ -60,10 +60,10 @@ def error(x):
 
 res = minimize(error, np.array([1.0, 0.0]))
 
-config['polly'] *= res.x[0]
-config['polly'][-1] += res.x[1]
+config['poly'] *= res.x[0]
+config['poly'][-1] += res.x[1]
 
-y = yarspy.weight(x_test, config)
+y = yarspy.weight(x_test, config, use_fixed=True)
 e = y_test - y
 
 print("\nValidation errors:")
@@ -73,9 +73,9 @@ print("\n#   Corrected config:")
 print(f"#   length           : {config['ntaps']}")
 print(f"#   Fudge factor     : {config['fudge']:.10e}")
 print(f"#   Window factor    : {config['window']:.10e}")
-print(f"#   Polly            : {len(config['polly'])}")
-for i in range(len(config['polly'])):
-    print(f"#   [{i}] = {config['polly'][i]:.10e}")
+print(f"#   poly            : {len(config['poly'])}")
+for i in range(len(config['poly'])):
+    print(f"#   [{i}] = {config['poly'][i]:.10e}")
 
 plt.plot(x_test, y, x_test, y_test)
 plt.show()

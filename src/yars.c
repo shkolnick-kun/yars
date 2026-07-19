@@ -17,26 +17,16 @@
 
 /**
  * \file yars.c
- * \brief Implementation of the YARS resampler algorithm.
+ * \brief Implementation of the YARS resampler algorithm (f32 and i32).
  */
 
 #include "yars.h"
 
 /**
- * \brief Kaiser window coefficients for 100 dB stopband (used by the default configuration).
+ * \brief Kaiser window coefficients for 100 dB stopband (used by the default f32 configuration).
  * \internal
  */
-YARS_CONST float _kaiser_100db[] = {
-#ifdef YARS_USE_COARSE
-    -3.9717492461e-01,
-     2.3297750950e+00,
-    -6.4596223831e+00,
-     1.1202646255e+01,
-    -1.3136842728e+01,
-     1.0229040146e+01,
-    -4.7674875259e+00,
-     9.9999994040e-01
-#else/*YARS_USE_COARSE*/
+YARS_CONST float _kaiser_100db_f32[] = {
     -3.9717498422e-01,
      2.3297753334e+00,
     -6.4596233368e+00,
@@ -45,42 +35,32 @@ YARS_CONST float _kaiser_100db[] = {
      1.0229041100e+01,
     -4.7674880028e+00,
      1.0000000000e+00
-#endif/*YARS_USE_COARSE*/
 };
 
 /**
- * \brief Default configuration (Kaiser window with 100 dB stopband, 79 taps).
+ * \brief Default configuration (f32) – Kaiser window with 100 dB stopband, 79 taps.
+ *        fudge = 1 / 1.0937988033 ≈ 0.914244920531081
  */
-YARS_CONST yarsCfgSt yars_defaults = {
-    .polly  = _kaiser_100db,
-#ifdef YARS_USE_COARSE
-    .fudge  = 1.0889013871e+00,
-#else/*YARS_USE_COARSE*/
-    .fudge  = 1.0937988033e+00,
-#endif/*YARS_USE_COARSE*/
-    .window = 2.5640861277e-02,
-    .ntaps  = 79,
-    .npolly = 8
+YARS_CONST yarsCfgF32St yars_f32_defaults = {
+    .poly     = _kaiser_100db_f32,
+    .fudge     = 0.914244920531081f,
+    .window    = 2.5640861277e-02f,
+    .ntaps     = 79,
+    .npoly    = 8
 };
 
 /**
- * \brief Perform one resampling step.
+ * \brief Perform one resampling step (f32).
  * \param cfg      Configuration of the filter.
  * \param state    Resampler state.
  * \param input_cb Callback function that returns the next input sample.
  * \param cbarg    Argument passed to the callback.
  * \return Next output sample.
- *
- * \details Implementation of the fractional‑delay resampling algorithm:
- *          - While the phase is positive, new input samples are fetched via the callback.
- *          - The weighted sum of the ring buffer is computed using weights that depend on the current phase shift.
- *          - The frequency ratio is clamped to a minimum value for stability.
- *          - The phase is updated for the next output sample.
  */
-float yars_run(YARS_CONST yarsCfgSt * cfg,
-               yarsStateSt * state,
-               float (*input_cb)(void *),
-               void * cbarg)
+float yars_f32_run(YARS_CONST yarsCfgF32St * cfg,
+                   yarsStateF32St * state,
+                   float (*input_cb)(void *),
+                   void * cbarg)
 {
     /* Read enough input samples */
     while (state->phase > 0.0f)
@@ -100,7 +80,7 @@ float yars_run(YARS_CONST yarsCfgSt * cfg,
 
     for (int16_t i = cfg->ntaps; i > 0; i--)
     {
-        out += yars_weight(cfg, filter_phase) * state->ring[j];
+        out += yars_f32_weight(cfg, filter_phase) * state->ring[j];
 
         filter_phase += 1.0f;
         if (--j < 0)
@@ -122,22 +102,11 @@ float yars_run(YARS_CONST yarsCfgSt * cfg,
 }
 
 /*===========================================================================*/
-/*                      Fixed math implementation                            */
+/*                      Fixed‑math (i32) implementation                     */
 /*===========================================================================*/
 
-/*Default configuration*/
-#ifdef YARS_USE_COARSE
-#define _KAISER_QN_100DB \
-X(0,  -852926656, 31)    \
-X(1,  1250788480, 29)    \
-X(2, -1733991680, 28)    \
-X(3,  1503593727, 27)    \
-X(4, -1763197185, 27)    \
-X(5,  1372918528, 27)    \
-X(6, -1279762688, 28)    \
-X(7,  1073741760, 30)
-#else/*ARS_USE_COARSE*/
-#define _KAISER_QN_100DB \
+/*Default configuration for i32*/
+#define _KAISER_I32_100DB \
 X(0,  -852926785, 31)    \
 X(1,  1250788607, 29)    \
 X(2, -1733991937, 28)    \
@@ -146,60 +115,50 @@ X(4, -1763197440, 27)    \
 X(5,  1372918656, 27)    \
 X(6, -1279762817, 28)    \
 X(7,  1073741824, 30)
-#endif/*YARS_USE_COARSE*/
 
-#define _KAISER_QN_ID(i) _KAISER_QN_ID_##i
+#define _KAISER_I32_ID(i) _KAISER_I32_ID_##i
 typedef enum {
-#define X(id, num, dig) _KAISER_QN_ID(id),
-    _KAISER_QN_100DB
+#define X(id, num, dig) _KAISER_I32_ID(id),
+    _KAISER_I32_100DB
 #undef X
-    _KAISER_QN_ID_LIM
-} _kaiserQn100bdIdEn;
+    _KAISER_I32_ID_LIM
+} _kaiserI32IdEn;
 
-
-static YARS_CONST int32_t _kaiser_qn_100db[] = {
+static YARS_CONST int32_t _kaiser_i32_100db[] = {
 #define X(i, Ai, FDAi) Ai,
-    _KAISER_QN_100DB
+    _KAISER_I32_100DB
 #undef X
 };
 
-static YARS_CONST int8_t _fd_kaiser_qn_100db[] = {
+static YARS_CONST int8_t _fd_kaiser_i32_100db[] = {
 #define X(i, Ai, FDAi) FDAi,
-    _KAISER_QN_100DB
+    _KAISER_I32_100DB
 #undef X
 };
 
-YARS_CONST yarsQnCfgSt yars_qn_defaults = {
-    .polly     = _kaiser_qn_100db,
-    .fd_polly  = _fd_kaiser_qn_100db,
-#ifdef YARS_USE_COARSE
-    .fudge     = 1169198961, /*TODO: Fine tuning!*/
-#else/*YARS_USE_COARSE*/
-    .fudge     = 1174457300, /*1174457522*/
-#endif/*YARS_USE_COARSE*/
-    .window    = 55063330,
+YARS_CONST yarsCfgI32St yars_i32_defaults = {
+    .poly     = _kaiser_i32_100db,
+    .fd_poly  = _fd_kaiser_i32_100db,
+    .fudge     = 981663008,   /* 0.914244920531081 * 2^30 ≈ 981663008 */
+    .window    = 55063330,    /* 0.025640861277 * 2^31 ≈ 55063330 */
     .ntaps     = 79,
-    .npolly    = 8,
+    .npoly    = 8,
     .fd_fudge  = 30,
     .fd_window = 31,
 };
 
 /**
- * \brief Perform one resampling step using fixed-point arithmetic.
- * \param cfg      Configuration of the filter (fixed-point).
- * \param state    Resampler state (fixed-point).
+ * \brief Perform one resampling step using fixed‑point arithmetic (i32).
+ * \param cfg      Configuration of the filter (fixed‑point).
+ * \param state    Resampler state (fixed‑point).
  * \param input_cb Callback that returns the next input sample as int32_t in Q1.30.
  * \param cbarg    Argument passed to the callback.
  * \return Next output sample as int32_t in Q1.30.
- *
- * \details This function mirrors the behaviour of yars_run() but uses
- *          fixed-point numbers. Input samples must be in Q1.30 format,
- *          output is also in Q1.30. Phase and step are stored in Q8.24.
  */
-int32_t yars_run_qn(YARS_CONST yarsQnCfgSt * cfg,
-                    yarsQnStateSt * state,
-                    int32_t (*input_cb)(void *),
-                    void * cbarg)
+int32_t yars_i32_run(YARS_CONST yarsCfgI32St * cfg,
+                     yarsStateI32St * state,
+                     int32_t (*input_cb)(void *),
+                     void * cbarg)
 {
     const int32_t ONE_Q24 = 1 << 24;          /* 1.0 in Q8.24 */
     const int32_t HALF_Q24 = 1 << 23;         /* 0.5 in Q8.24 */
@@ -211,7 +170,7 @@ int32_t yars_run_qn(YARS_CONST yarsQnCfgSt * cfg,
         {
             state->index = 0;
         }
-        state->ring[state->index] = input_cb(cbarg);  /* Q0.31 sample */
+        state->ring[state->index] = input_cb(cbarg);  /* Q1.30 sample */
         state->phase -= ONE_Q24;                      /* subtract 1.0 */
     }
 
@@ -222,7 +181,7 @@ int32_t yars_run_qn(YARS_CONST yarsQnCfgSt * cfg,
 
     for (int16_t i = cfg->ntaps; i > 0; i--)
     {
-        acc += _weight_qn(cfg, filter_phase) * state->ring[j]; /* Q1.61 */
+        acc += _yars_i32_weight_calc(cfg, filter_phase) * state->ring[j]; /* Q1.61 */
         filter_phase += ONE_Q24;                               /* +1.0 */
         if (--j < 0)
         {
