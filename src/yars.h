@@ -56,8 +56,11 @@ typedef struct {
  * \brief Declare a ring buffer for the f32 resampler.
  * \param buf Name of the buffer variable.
  * \param n   Number of samples (buffer length).
+ *
+ * \note The actual buffer size is multiplied by #YARS_MAX_RATIO to support
+ *       adaptive filter length during decimation.
  */
-#define YARS_F32_RING(buf, n) float buf[n]
+#define YARS_F32_RING(buf, n) float buf[(n) * YARS_MAX_RATIO]
 
 /**
  * \brief Declare a ring buffer with the default size (79 taps).
@@ -208,8 +211,10 @@ typedef struct {
  * \brief Declare a ring buffer for fixed‑point resampler.
  * \param buf Name of the buffer variable.
  * \param n   Number of samples (buffer length).
+ *
+ * \note The actual buffer size is multiplied by #YARS_MAX_RATIO.
  */
-#define YARS_I32_RING(buf, n) int32_t buf[n]
+#define YARS_I32_RING(buf, n) int32_t buf[(n) * YARS_MAX_RATIO]
 
 /**
  * \brief Declare a ring buffer with default size (79 taps) for fixed‑point.
@@ -455,8 +460,10 @@ typedef struct {
  * \brief Declare a ring buffer for i16 resampler.
  * \param buf Name of the buffer variable.
  * \param n   Number of samples (buffer length).
+ *
+ * \note The actual buffer size is multiplied by #YARS_MAX_RATIO.
  */
-#define YARS_I16_RING(buf, n) int16_t buf[n]
+#define YARS_I16_RING(buf, n) int16_t buf[(n) * YARS_MAX_RATIO]
 
 /**
  * \brief Declare a ring buffer with default size (79 taps) for i16.
@@ -634,5 +641,19 @@ int16_t yars_i16_run(YARS_CONST yarsCfgI16St * cfg,
                      yarsStateI16St * state,
                      int16_t (*input_cb)(void *),
                      void * cbarg);
+
+/*===========================================================================*/
+/*                     Common constants for fixed‑point                     */
+/*===========================================================================*/
+
+/**
+ * \def YARS_MAX_RATIO
+ * \brief Maximum allowed ratio of input to output sample rates.
+ *
+ * This constant defines the size multiplier for the ring buffer to support
+ * adaptive filter length during decimation. The buffer must be allocated
+ * with at least ntaps * YARS_MAX_RATIO elements.
+ */
+#define YARS_MAX_RATIO 10
 
 #endif /* YARS_H */

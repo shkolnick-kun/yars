@@ -60,6 +60,9 @@ YARS_F32 = 0
 YARS_I32 = 1
 YARS_I16 = 2
 
+# Maximum ratio for ring buffer expansion (must match YARS_MAX_RATIO in yars.h)
+YARS_MAX_RATIO = 10
+
 
 # ============================================================================
 #  C API imports from yars.c
@@ -576,6 +579,11 @@ cdef class Resampler:
         ratio (float): Current input‑to‑output frequency ratio (f_in / f_out).
             Can be changed dynamically during processing.
 
+    Notes:
+        The internal ring buffer size is automatically set to
+        ntaps * YARS_MAX_RATIO to support adaptive filtering during
+        decimation (see YARS_MAX_RATIO constant).
+
     Examples:
         >>> def source(res):
         ...     # Return a new input sample each call
@@ -662,7 +670,8 @@ cdef class Resampler:
             else:
                 self._i32_cfg = yars_i32_defaults
 
-            self._i32_ring = np.zeros(self._i32_cfg.ntaps, dtype=np.int32)
+            # Allocate enlarged ring buffer (ntaps * YARS_MAX_RATIO)
+            self._i32_ring = np.zeros(self._i32_cfg.ntaps * YARS_MAX_RATIO, dtype=np.int32)
             self._i32_ring_view = self._i32_ring
             self._i32_state.ring = &self._i32_ring_view[0]
             self._i32_state.freq_ratio = <_int32_t>int(ratio * (2 ** 24))
@@ -689,7 +698,8 @@ cdef class Resampler:
             else:
                 self._i16_cfg = yars_i16_defaults
 
-            self._i16_ring = np.zeros(self._i16_cfg.ntaps, dtype=np.int16)
+            # Allocate enlarged ring buffer
+            self._i16_ring = np.zeros(self._i16_cfg.ntaps * YARS_MAX_RATIO, dtype=np.int16)
             self._i16_ring_view = self._i16_ring
             self._i16_state.ring = &self._i16_ring_view[0]
             self._i16_state.freq_ratio = <_int32_t>int(ratio * (2 ** 24))
@@ -710,7 +720,8 @@ cdef class Resampler:
             else:
                 self.cfg = yars_f32_defaults
 
-            self._ring = np.zeros(self.cfg.ntaps, dtype=np.float32)
+            # Allocate enlarged ring buffer
+            self._ring = np.zeros(self.cfg.ntaps * YARS_MAX_RATIO, dtype=np.float32)
             self.v_ring = self._ring
             self.state.ring = &self.v_ring[0]
             self.state.freq_ratio = <float>ratio

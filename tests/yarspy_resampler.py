@@ -56,9 +56,9 @@ def _input_cb(*args):
     cur += 1
     return ret
 
-ratio = np.pi * 2
+ratio = 9.5
 
-resample_x = yarspy.Resampler(_input_cb, ratio)
+resample_x = yarspy.Resampler(_input_cb, ratio, mode=yarspy.YARS_I16)
 
 yl = []
 while cur < len(x):

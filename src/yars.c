@@ -72,10 +72,13 @@ float yars_f32_run(YARS_CONST yarsCfgF32St * cfg,
                    float (*input_cb)(void *),
                    void * cbarg)
 {
+    uint16_t ring_size = cfg->ntaps * YARS_MAX_RATIO;
+    int32_t k;
+
     /* Read enough input samples */
     while (state->phase > 0.0f)
     {
-        if (++state->index >= cfg->ntaps)
+        if (++state->index >= ring_size)
         {
             state->index = 0;
         }
@@ -83,19 +86,25 @@ float yars_f32_run(YARS_CONST yarsCfgF32St * cfg,
         state->phase -= 1.0f;
     }
 
+    /* Compute adaptive filter parameters */
+    float rinc = (state->freq_ratio > 1.0f) ? state->freq_ratio : 1.0f;
+    float step = 1.0f / rinc;
+    int32_t tmp = (cfg->ntaps - 1) / 2;
+    int32_t d  =  roundf(tmp * rinc);
+    float start_phase = (state->phase - (float)d) * step;
+
     /* Filtering */
-    float   filter_phase = state->phase + 1.0f - 0.5f * (float)(cfg->ntaps - 1);
-    float   out = 0.0f;
+    float out = 0.0f;
     int16_t j = state->index;
 
-    for (int16_t i = cfg->ntaps; i > 0; i--)
+    for (k = 0; k <= 2 * d; k++)
     {
-        out += yars_f32_weight(cfg, filter_phase) * state->ring[j];
+        float phase = start_phase + (float)k * step;
+        out += yars_f32_weight(cfg, phase) / rinc * state->ring[j];
 
-        filter_phase += 1.0f;
         if (--j < 0)
         {
-            j = cfg->ntaps - 1;
+            j = ring_size - 1;
         }
     }
 
@@ -170,10 +179,13 @@ int32_t yars_i32_run(YARS_CONST yarsCfgI32St * cfg,
                      int32_t (*input_cb)(void *),
                      void * cbarg)
 {
+    int32_t k;
+    uint16_t ring_size = cfg->ntaps * YARS_MAX_RATIO;
+
     /* Read enough input samples while phase > 0 */
     while (state->phase > 0)
     {
-        if (++state->index >= cfg->ntaps)
+        if (++state->index >= ring_size)
         {
             state->index = 0;
         }
@@ -181,18 +193,24 @@ int32_t yars_i32_run(YARS_CONST yarsCfgI32St * cfg,
         state->phase -= _YARS_ONE_Q24;                /* subtract 1.0 */
     }
 
+    /* Compute adaptive filter parameters in Q8.24 */
+    int64_t rinc_q24 = (state->freq_ratio > _YARS_ONE_Q24) ? state->freq_ratio : _YARS_ONE_Q24;
+    int64_t step_q24 = (((int64_t)1)<<48) / rinc_q24;
+
+    int32_t d = mul_2pwr64(((int64_t)cfg->ntaps - 1) * rinc_q24, -25);
+    int32_t start_phase = mul_2pwr64((state->phase - mul_2pwr64(d, 24)) * step_q24, -24);
+
     /* Filtering */
-    int32_t filter_phase = state->phase + _YARS_ONE_Q24 - ((cfg->ntaps - 1) * _YARS_HALF_Q24);
     int64_t acc = 0;
     int16_t j = state->index;
 
-    for (int16_t i = cfg->ntaps; i > 0; i--)
+    for (k = 0; k <= 2 * d; k++)
     {
-        acc += _yars_i32_weight_calc(cfg, filter_phase) * state->ring[j]; /* Q2.61 */
-        filter_phase += _YARS_ONE_Q24;                                    /* +1.0  */
+        int32_t phase = start_phase + k * step_q24;   /* Q8.24 */
+        acc += _yars_i32_weight_calc(cfg, phase) * state->ring[j] / rinc_q24;  /* Q2.30 * Q1.31 / Q8.24 */
         if (--j < 0)
         {
-            j = cfg->ntaps - 1;
+            j = ring_size - 1;
         }
     }
 
@@ -206,13 +224,13 @@ int32_t yars_i32_run(YARS_CONST yarsCfgI32St * cfg,
     /* Advance phase */
     state->phase += state->freq_ratio;
 
-    int64_t out = mul_2pwr64(acc, -30); /* Q1.31 */
+    /* Normalize by rinc and convert to Q1.31 */
+    int64_t out = mul_2pwr64(acc, -6);
 
     if (out >= INT32_MAX)
     {
         out = INT32_MAX;
     }
-
     if (out <= INT32_MIN)
     {
         out = INT32_MIN;
@@ -283,10 +301,13 @@ int16_t yars_i16_run(YARS_CONST yarsCfgI16St * cfg,
                      int16_t (*input_cb)(void *),
                      void * cbarg)
 {
+    int32_t k;
+    uint16_t ring_size = cfg->ntaps * YARS_MAX_RATIO;
+
     /* Read enough input samples while phase > 0 */
     while (state->phase > 0)
     {
-        if (++state->index >= cfg->ntaps)
+        if (++state->index >= ring_size)
         {
             state->index = 0;
         }
@@ -294,18 +315,25 @@ int16_t yars_i16_run(YARS_CONST yarsCfgI16St * cfg,
         state->phase -= _YARS_ONE_Q24;                /* subtract 1.0 */
     }
 
+    /* Compute adaptive filter parameters in Q8.24 */
+    int64_t rinc_q24 = (state->freq_ratio > _YARS_ONE_Q24) ? state->freq_ratio : _YARS_ONE_Q24;
+    int64_t step_q24 = (((int64_t)1)<<48) / rinc_q24;
+
+    int32_t d   = mul_2pwr64(((int64_t)cfg->ntaps - 1) * rinc_q24, -25);
+    int32_t start_phase = mul_2pwr64((state->phase - mul_2pwr64(d, 24)) * step_q24, -24);
+
     /* Filtering */
-    int32_t filter_phase = state->phase + _YARS_ONE_Q24 - ((cfg->ntaps - 1) * _YARS_HALF_Q24); /* Q8.24 */
-    int32_t acc = 0;
+    int32_t acc = 0;  /* Use 64-bit accumulator to avoid overflow */
     int16_t j = state->index;
 
-    for (int16_t i = cfg->ntaps; i > 0; i--)
+    for (k = 0; k <= 2 * d; k++)
     {
-        acc += _yars_i16_weight_calc(cfg, filter_phase) * state->ring[j]; /* Q2.30 */
-        filter_phase += _YARS_ONE_Q24;                                    /* +1.0 */
+        int32_t phase = start_phase + k * (int32_t)step_q24;   /* Q8.24 */
+        int32_t delta = _yars_i16_weight_calc(cfg, phase) * state->ring[j]; /* Q1.15 * Q1.15 = Q.2.30*/
+        acc += mul_2pwr64(delta, 24) / rinc_q24;  /* Q2.30 * Q8.24 / * Q8.24 */
         if (--j < 0)
         {
-            j = cfg->ntaps - 1;
+            j = ring_size - 1;
         }
     }
 
@@ -319,13 +347,13 @@ int16_t yars_i16_run(YARS_CONST yarsCfgI16St * cfg,
     /* Advance phase */
     state->phase += state->freq_ratio;
 
-    int32_t out = mul_2pwr32(acc, -15); /* Q1.15 */
+    /* Normalize by rinc and convert to Q1.15 */
+    int64_t out = mul_2pwr32(acc, -15); /* Q1.15 */;
 
     if (out >= INT16_MAX)
     {
         out = INT16_MAX;
     }
-
     if (out <= INT16_MIN)
     {
         out = INT16_MIN;

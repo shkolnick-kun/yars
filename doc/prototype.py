@@ -86,6 +86,8 @@ def _rsm_sinc(x):
 
 
 # -----------------------------------------------------------------------------
+MAX_RATIO = 10
+
 class Resampler:
     """Sample rate converter using a windowed sinc interpolation filter.
 
@@ -100,13 +102,12 @@ class Resampler:
         poly (numpy.ndarray): Polynomial coefficients for the Kaiser window
             approximation (descending order).
         input_cb (callable): Callback that provides the next input sample.
-        ratio (float): Resampling ratio (output sample rate / input sample rate).
+        ratio (float): Resampling ratio (input sample rate / output sample rate).
             This is the inverse of the ratio used in the C implementation.
         ring (numpy.ndarray): Circular buffer for past input samples.
         index (int): Current write position in the ring buffer.
         phase (float): Internal phase accumulator (fractional output sample index).
     """
-
     def __init__(self, input_cb, ratio, cfg=DEFAULT_CFG):
         """Initialise the resampler.
 
@@ -114,7 +115,7 @@ class Resampler:
             input_cb (callable): A callable that returns the next input sample
                 (float) each time it is called. It will be called repeatedly
                 as needed.
-            ratio (float): Desired resampling ratio = f_out / f_in.
+            ratio (float): Desired resampling ratio = f_in / f_out.
                 Note: This is the inverse of the ratio used in the C version.
             cfg (dict, optional): Configuration dictionary. If not provided,
                 the default configuration (DEFAULT_CFG) is used. The dictionary
@@ -133,7 +134,7 @@ class Resampler:
         self.poly = np.asarray(cfg['poly'], dtype=np.float32)
 
         # Ensure the ratio is at least the minimum required value.
-        # In this prototype ratio = f_out/f_in, so minimum is ntaps/2.
+        # In this prototype ratio = f_in/f_out, so minimum is ntaps/2.
         min_ratio = 2.0 / self.ntaps
         if ratio < min_ratio:
             print(f"Warning: ratio must be >= {min_ratio:.4e}. Using {min_ratio:.4e}.")
@@ -141,7 +142,7 @@ class Resampler:
 
         self.input_cb = input_cb
         self.ratio = ratio
-        self.ring = np.zeros(self.ntaps, dtype=np.float32)
+        self.ring = np.zeros(self.ntaps * MAX_RATIO, dtype=np.float32)
         self.index = 0
         self.phase = 0.0
 
@@ -179,7 +180,7 @@ class Resampler:
         # Fill the ring buffer with enough new samples to satisfy the phase.
         while self.phase > 0:
             self.index += 1
-            if self.index >= self.ntaps:
+            if self.index >= self.ntaps * MAX_RATIO:
                 self.index = 0
             self.ring[self.index] = self.input_cb()
             self.phase -= 1
@@ -187,19 +188,21 @@ class Resampler:
         # Compute the interpolated output.
         # filter_phase is the phase of the first filter tap relative to the
         # centre of the filter.
-        filter_phase = self.phase - (self.ntaps - 1) / 2.0 + 1.0
-        j = self.index
-        out = 0.0
-        for _ in range(self.ntaps):
-            out += self._weight(filter_phase) * self.ring[j]
-            filter_phase += 1.0
+
+
+        rinc = max(1.0, self.ratio)
+        d    = round(((self.ntaps - 1) // 2) * rinc)# Глубина
+        j    = self.index
+        out  = 0
+        for k in range(2 * d + 1):
+            out += self._weight((self.phase + (k - d)) / rinc ) * self.ring[j]
             j -= 1
             if j < 0:
-                j = self.ntaps - 1
+                j = self.ntaps * MAX_RATIO - 1
 
         # Advance the output phase.
         self.phase += self.ratio
-        return out
+        return out / rinc
 
 
 # -----------------------------------------------------------------------------
@@ -224,8 +227,8 @@ if __name__ == "__main__":
         return ret
 
     # Use a ratio slightly above the minimum to avoid clipping.
-    # Here ratio = f_out/f_in, so minimum is ntaps/2 ≈ 39.5
-    ratio = 4.0
+    # Here ratio = f_in/f_out, so minimum is ntaps/2 ≈ 39.5
+    ratio = 7.2
 
     resample = Resampler(_input_cb, ratio)
 
@@ -234,7 +237,7 @@ if __name__ == "__main__":
         y.append(resample())
 
     y = np.array(y)
-    # Time scale for output: original time step 0.001, scaled by ratio (f_out/f_in)
+    # Time scale for output: original time step 0.001, scaled by ratio (f_in/f_out)
     py = np.array([0.001 * i for i in range(len(y))]) * ratio * f
 
     plt.plot(px, x, '.-', label='Input')
