@@ -37,6 +37,21 @@
 #endif /* YARS_CONST */
 
 /*===========================================================================*/
+/*                               Constants                                   */
+/*===========================================================================*/
+/**
+ * \def YARS_MAX_RATIO
+ * \brief Maximum allowed ratio of input to output sample rates.
+ *
+ * This constant defines the size multiplier for the ring buffer to support
+ * adaptive filter length during decimation. The buffer must be allocated
+ * with at least ntaps * YARS_MAX_RATIO elements.
+ */
+#ifndef YARS_MAX_RATIO
+#define YARS_MAX_RATIO (20)
+#endif/*YARS_MAX_RATIO*/
+
+/*===========================================================================*/
 /*                          Floating point (f32) API                         */
 /*===========================================================================*/
 
@@ -225,14 +240,14 @@ typedef struct {
 /**
  * \brief Initializer for a fixed‑point resampler state.
  * \param buf          Name of the ring buffer variable.
- * \param freq_ratio_q8_24   Phase increment in Q8.24 format (f_in / f_out scaled by 2^24).
+ * \param ratio   Phase increment in Q8.24 format (f_in / f_out scaled by 2^24).
  */
-#define YARS_I32_STATE_INITIALIZER(buf, freq_ratio) \
-{                                                   \
-    .ring  = buf,                                   \
-    .freq_ratio = freq_ratio,                       \
-    .phase = 0,                                     \
-    .index = 0                                      \
+#define YARS_I32_STATE_INITIALIZER(buf, ratio) \
+{                                              \
+    .ring  = buf,                              \
+    .freq_ratio = ratio,                       \
+    .phase = 0,                                \
+    .index = 0                                 \
 }
 
 /*
@@ -463,7 +478,7 @@ typedef struct {
  *
  * \note The actual buffer size is multiplied by #YARS_MAX_RATIO.
  */
-#define YARS_I16_RING(buf, n) int16_t buf[(n) * YARS_MAX_RATIO]
+#define YARS_I16_RING(buf, n) int16_t buf[(n) * YARS_MAX_RATIO] = {0}
 
 /**
  * \brief Declare a ring buffer with default size (79 taps) for i16.
@@ -474,14 +489,14 @@ typedef struct {
 /**
  * \brief Initializer for an i16 resampler state.
  * \param buf          Name of the ring buffer variable.
- * \param freq_ratio   Phase increment in Q8.24 (f_in / f_out * 2^24).
+ * \param ratio   Phase increment in Q8.24 (f_in / f_out * 2^24).
  */
-#define YARS_I16_STATE_INITIALIZER(buf, freq_ratio) \
-{                                                   \
-    .ring       = buf,                              \
-    .freq_ratio = freq_ratio,                       \
-    .phase      = 0,                                \
-    .index      = 0                                 \
+#define YARS_I16_STATE_INITIALIZER(buf, ratio) \
+{                                              \
+    .ring       = buf,                         \
+    .freq_ratio = ratio,                       \
+    .phase      = 0,                           \
+    .index      = 0                            \
 }
 
 /**
@@ -495,7 +510,7 @@ X(1,    667, 15)           \
 X(2,  -6069, 15)           \
 X(3,  26521, 15)           \
 X(4, -26944, 14)           \
-X(5,  32766, 15)
+X(5,  16383, 14)
 
 /*---------------------------------------------------------------------------*/
 #define YARS_SINC_I16_ID(i) YARS_SINC_I16_ID_##i
@@ -575,18 +590,13 @@ static inline int32_t _yars_i16_sinc(int32_t x24)
     int32_t fx2  = mul_2pwr32(fx15 * fx15, -15);             /* fx2  is Q1.15 */
     int32_t x    = mul_2pwr32(x24 + _YARS_L32(1, 9), -9);    /* x    is Q1.15 */
 
-    int32_t out  = _yars_i16_poly(fx2, 15, A, FDA, YARS_SINC_I16_ID_LIM); /* Q1.15 */
-
-    if (out > INT16_MAX)
-    {
-        out = INT16_MAX;
-    }
+    int32_t out  = _yars_i16_poly(fx2, 15, A, FDA, YARS_SINC_I16_ID_LIM); /* Q1.14 */
 
     if (0 != ix)
     {
         out = (out * fx15) / x; /* Q1.15 */
     }
-    return out; /* Q1.15 */
+    return out; /* Q1.14 */
 }
 
 static inline int16_t yars_i16_sinc(int32_t x24)
@@ -604,19 +614,19 @@ static inline int32_t _yars_i16_weight_calc(YARS_CONST yarsCfgI16St * cfg, int32
 {
     /* 1. sinc(fudge * x) */
     int64_t xs24 = mul_2pwr64(((int64_t)x24) * cfg->fudge, -cfg->fd_fudge); /* Q8.24 */
-    int32_t sinc = _yars_i16_sinc((int32_t)xs24);                           /* Q1.15 */
+    int32_t sinc = _yars_i16_sinc((int32_t)xs24);                           /* Q2.14 */
 
     /* 2. Window polynomial evaluated at (window * x) */
     /* Bring x*window to Q1.15 */
     int64_t xw   = (int32_t)mul_2pwr64(((int64_t)x24) * cfg->window, -9 - cfg->fd_window); /* Q1.15 */
     int32_t fx2  = mul_2pwr32(xw * xw, -15);                                               /* Q1.15 */
-    int32_t poly = _yars_i16_poly(fx2, 15, cfg->poly, cfg->fd_poly, cfg->npoly);           /* Q1.15 */
+    int32_t poly = _yars_i16_poly(fx2, 15, cfg->poly, cfg->fd_poly, cfg->npoly);           /* Qx.y */
 
-    /* Multiply poly by fudge (keep Q1.15) */
-    poly = (int32_t)mul_2pwr64((int64_t)poly * cfg->fudge, -cfg->fd_fudge);                /* Q1.15 */
+    /* Multiply poly by fudge (keep Qx.y) */
+    poly = (int32_t)mul_2pwr64((int64_t)poly * cfg->fudge, -cfg->fd_fudge);                /* Qx.y */
 
-    /* 3. weight = sinc * poly (both Q1.15) -> Q1.15 */
-    int32_t weight = mul_2pwr32(sinc * poly,  -cfg->fd_poly[cfg->npoly - 1]);                /* Q1.15 */
+    /* 3. weight = sinc * poly */
+    int32_t weight = mul_2pwr32(sinc * poly,  -cfg->fd_poly[cfg->npoly - 1]);              /* Q2.14 */
 
     return weight;
 }
@@ -641,19 +651,5 @@ int16_t yars_i16_run(YARS_CONST yarsCfgI16St * cfg,
                      yarsStateI16St * state,
                      int16_t (*input_cb)(void *),
                      void * cbarg);
-
-/*===========================================================================*/
-/*                     Common constants for fixed‑point                     */
-/*===========================================================================*/
-
-/**
- * \def YARS_MAX_RATIO
- * \brief Maximum allowed ratio of input to output sample rates.
- *
- * This constant defines the size multiplier for the ring buffer to support
- * adaptive filter length during decimation. The buffer must be allocated
- * with at least ntaps * YARS_MAX_RATIO elements.
- */
-#define YARS_MAX_RATIO 10
 
 #endif /* YARS_H */

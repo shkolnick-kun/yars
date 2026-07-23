@@ -42,6 +42,8 @@ Examples:
 
 from libc cimport stdint
 from libcpp cimport bool
+from libc.stdlib cimport malloc, free
+from libc.string cimport memcpy, memset
 
 ctypedef stdint.uint8_t  _uint8_t
 ctypedef stdint.uint16_t _uint16_t
@@ -60,14 +62,14 @@ YARS_F32 = 0
 YARS_I32 = 1
 YARS_I16 = 2
 
-# Maximum ratio for ring buffer expansion (must match YARS_MAX_RATIO in yars.h)
-YARS_MAX_RATIO = 10
-
-
 # ============================================================================
 #  C API imports from yars.c
 # ============================================================================
 cdef extern from "yars.c":
+
+    # Maximum ratio for ring buffer expansion (macro)
+    int YARS_MAX_RATIO
+
     # ---------- f32 ----------
     ctypedef struct yarsStateF32St:
         float *    ring
@@ -238,62 +240,46 @@ def convert_cfg_to_fixed(cfg, target='i32'):
     }
 
 
-def print_cfg(cfg, format='float', prefix='', name='my_cfg'):
+# ------------------------------------------------------------------------------
+#  Вспомогательные функции для print_cfg
+# ------------------------------------------------------------------------------
+
+def _print_float(cfg, prefix=''):
+    """Печать конфигурации в виде чисел с плавающей точкой."""
+    print(f"{prefix}fudge  = {cfg['fudge']}")
+    print(f"{prefix}window = {cfg['window']}")
+    print(f"{prefix}ntaps  = {cfg['ntaps']}")
+    print(f"{prefix}npoly = {len(cfg['poly'])}")
+    print(f"{prefix}poly  = {list(cfg['poly'])}")
+
+
+def _print_fixed(cfg, target, prefix=''):
+    """Печать конфигурации в фиксированной точке с экспонентами."""
+    fixed = convert_cfg_to_fixed(cfg, target=target)
+    print(f"{prefix}fudge    = {fixed['fudge']}  (exp {fixed['fd_fudge']})")
+    print(f"{prefix}window   = {fixed['window']}  (exp {fixed['fd_window']})")
+    print(f"{prefix}ntaps    = {fixed['ntaps']}")
+    print(f"{prefix}npoly   = {fixed['npoly']}")
+    print(f"{prefix}poly    = {fixed['poly']}")
+    print(f"{prefix}fd_poly = {fixed['fd_poly']}")
+
+
+def _print_c_code(cfg, target, prefix='', name='my_cfg'):
     """
-    Print configuration in the specified format.
-
-    Args:
-        cfg (dict): Dictionary with keys 'fudge', 'window', 'ntaps', 'poly'.
-        format (str): One of:
-            'float'   – floating-point values,
-            'fixed'   – fixed-point values with exponents,
-            'c_code'  – C initialization code for yarsCfgF32St and yarsCfgI32St structures.
-        prefix (str): String added before each output line.
-        name (str): Base name for variables in C code (default 'my_cfg').
+    Генерирует C-код для одной конфигурации (float, i32 или i16).
     """
-    if format == 'float':
-        print(f"{prefix}fudge  = {cfg['fudge']}")
-        print(f"{prefix}window = {cfg['window']}")
-        print(f"{prefix}ntaps  = {cfg['ntaps']}")
-        print(f"{prefix}npoly = {len(cfg['poly'])}")
-        print(f"{prefix}poly  = {list(cfg['poly'])}")
-
-    elif format == 'fixed':
-        fixed = convert_cfg_to_fixed(cfg, target='i32')
-        print(f"{prefix}fudge    = {fixed['fudge']}  (exp {fixed['fd_fudge']})")
-        print(f"{prefix}window   = {fixed['window']}  (exp {fixed['fd_window']})")
-        print(f"{prefix}ntaps    = {fixed['ntaps']}")
-        print(f"{prefix}npoly   = {fixed['npoly']}")
-        print(f"{prefix}poly    = {fixed['poly']}")
-        print(f"{prefix}fd_poly = {fixed['fd_poly']}")
-
-    elif format == 'c_code':
-        fixed = convert_cfg_to_fixed(cfg, target='i32')
-        # Prepare data
-        poly_float = list(cfg['poly'])
-        poly_fixed = fixed['poly']
-        fd_poly = fixed['fd_poly']
-        ntaps = cfg['ntaps']
-        npoly = len(poly_float)
+    if target == 'float':
+        poly_vals = list(cfg['poly'])
         fudge = cfg['fudge']
         window = cfg['window']
-        fudge_fixed = fixed['fudge']
-        fd_fudge = fixed['fd_fudge']
-        window_fixed = fixed['window']
-        fd_window = fixed['fd_window']
+        ntaps = cfg['ntaps']
+        npoly = len(poly_vals)
 
-        # Build variable names
         float_arr_name = f"poly_float_{name}"
-        fixed_arr_name = f"poly_fixed_{name}"
-        fd_arr_name = f"fd_poly_{name}"
         float_cfg_name = f"cfg_float_{name}"
-        fixed_cfg_name = f"cfg_fixed_{name}"
 
-        # Output
-        print(f"{prefix}// Configuration '{name}'")
-        print(f"{prefix}static const float {float_arr_name}[] = {{{', '.join(map(str, poly_float))}}};")
-        print(f"{prefix}static const int32_t {fixed_arr_name}[] = {{{', '.join(map(str, poly_fixed))}}};")
-        print(f"{prefix}static const int8_t {fd_arr_name}[] = {{{', '.join(map(str, fd_poly))}}};")
+        print(f"{prefix}// Float configuration '{name}'")
+        print(f"{prefix}static const float {float_arr_name}[] = {{{', '.join(map(str, poly_vals))}}};")
         print(f"{prefix}")
         print(f"{prefix}static const yarsCfgF32St {float_cfg_name} = {{")
         print(f"{prefix}    .poly = {float_arr_name},")
@@ -302,19 +288,79 @@ def print_cfg(cfg, format='float', prefix='', name='my_cfg'):
         print(f"{prefix}    .ntaps = {ntaps},")
         print(f"{prefix}    .npoly = {npoly}")
         print(f"{prefix}}};")
+    else:
+        # i32 или i16
+        fixed = convert_cfg_to_fixed(cfg, target=target)
+        poly_vals = fixed['poly']
+        fd_vals = fixed['fd_poly']
+        ntaps = fixed['ntaps']
+        npoly = fixed['npoly']
+        fudge = fixed['fudge']
+        fd_fudge = fixed['fd_fudge']
+        window = fixed['window']
+        fd_window = fixed['fd_window']
+
+        # Определяем типы для массива коэффициентов
+        if target == 'i32':
+            ctype = 'int32_t'
+            struct_type = 'yarsCfgI32St'
+            arr_name = f"poly_i32_{name}"
+            fd_arr_name = f"fd_poly_i32_{name}"
+            cfg_name = f"cfg_i32_{name}"
+        else:  # i16
+            ctype = 'int16_t'
+            struct_type = 'yarsCfgI16St'
+            arr_name = f"poly_i16_{name}"
+            fd_arr_name = f"fd_poly_i16_{name}"
+            cfg_name = f"cfg_i16_{name}"
+
+        print(f"{prefix}// {target.upper()} fixed-point configuration '{name}'")
+        print(f"{prefix}static const {ctype} {arr_name}[] = {{{', '.join(map(str, poly_vals))}}};")
+        print(f"{prefix}static const int8_t {fd_arr_name}[] = {{{', '.join(map(str, fd_vals))}}};")
         print(f"{prefix}")
-        print(f"{prefix}static const yarsCfgI32St {fixed_cfg_name} = {{")
-        print(f"{prefix}    .poly = {fixed_arr_name},")
+        print(f"{prefix}static const {struct_type} {cfg_name} = {{")
+        print(f"{prefix}    .poly = {arr_name},")
         print(f"{prefix}    .fd_poly = {fd_arr_name},")
-        print(f"{prefix}    .fudge = {fudge_fixed},")
-        print(f"{prefix}    .window = {window_fixed},")
+        print(f"{prefix}    .fudge = {fudge},")
+        print(f"{prefix}    .window = {window},")
         print(f"{prefix}    .ntaps = {ntaps},")
         print(f"{prefix}    .npoly = {npoly},")
         print(f"{prefix}    .fd_fudge = {fd_fudge},")
         print(f"{prefix}    .fd_window = {fd_window}")
         print(f"{prefix}}};")
+
+
+# ------------------------------------------------------------------------------
+#  Public function print_cfg (доработанная)
+# ------------------------------------------------------------------------------
+
+def print_cfg(cfg, mode=None, prefix='', name='my_cfg'):
+    """
+    Печатает конфигурацию в заданном представлении.
+
+    Args:
+        cfg (dict): Словарь с ключами 'fudge', 'window', 'ntaps', 'poly'.
+        mode (int or None): Один из YARS_F32, YARS_I32, YARS_I16 или None.
+            Если None, генерируется C-код для всех трёх структур.
+        prefix (str): Строка, добавляемая перед каждой строкой вывода.
+        name (str): Базовое имя для переменных в C-коде (используется только при mode=None).
+    """
+    if mode is None:
+        # Генерируем C-код для всех трёх типов
+        print(f"{prefix}// ===== C-код для конфигурации '{name}' =====")
+        _print_c_code(cfg, 'float', prefix=prefix, name=name + '_f32')
+        print(f"{prefix}")
+        _print_c_code(cfg, 'i32', prefix=prefix, name=name + '_i32')
+        print(f"{prefix}")
+        _print_c_code(cfg, 'i16', prefix=prefix, name=name + '_i16')
+    elif mode == YARS_F32:
+        _print_float(cfg, prefix=prefix)
+    elif mode == YARS_I32:
+        _print_fixed(cfg, target='i32', prefix=prefix)
+    elif mode == YARS_I16:
+        _print_fixed(cfg, target='i16', prefix=prefix)
     else:
-        raise ValueError("Unsupported format. Use 'float', 'fixed' or 'c_code'.")
+        raise ValueError("mode must be YARS_F32, YARS_I32, YARS_I16 or None")
 
 
 # ============================================================================
@@ -347,7 +393,7 @@ def sinc(np.ndarray x, int mode=YARS_F32):
             v_y[i] = yars_i32_sinc(<_int32_t>int(v_x[i] * 2**24)) / 2**30
     elif mode == YARS_I16:
         for i in range(len(x)):
-            v_y[i] = yars_i16_sinc(<_int32_t>int(v_x[i] * 2**24)) / 2**15
+            v_y[i] = yars_i16_sinc(<_int32_t>int(v_x[i] * 2**24)) / 2**14
     else:
         for i in range(len(x)):
             v_y[i] = yars_f32_sinc(v_x[i])
@@ -446,7 +492,7 @@ def weight(np.ndarray x, dict cfg=None, int mode=YARS_F32):
             v_y[i] = yars_i32_weight(&_cfg_i32, <_int32_t>int(v_x[i] * (2 ** 24))) / (2 ** 30)
     elif mode == YARS_I16:
         for i in range(len(x)):
-            v_y[i] = yars_i16_weight(&_cfg_i16, <_int32_t>int(v_x[i] * (2 ** 24))) / (2 ** 15)
+            v_y[i] = yars_i16_weight(&_cfg_i16, <_int32_t>int(v_x[i] * (2 ** 24))) / (2 ** 14)
     else:
         for i in range(len(x)):
             v_y[i] = yars_f32_weight(&_cfg, v_x[i])
@@ -492,13 +538,13 @@ cdef _int32_t _yars_input_cb_i32(void * py_object) noexcept:
     """
     C callback invoked by yars_i32_run (fixed-point) to obtain the next input sample.
 
-    Converts the Python float to Q1.30 format.
+    Converts the Python float to Q1.31 format.
 
     Args:
         py_object (void *): Pointer to a Python Resampler instance.
 
     Returns:
-        int32_t: Next input sample in Q1.30 format.
+        int32_t: Next input sample in Q1.31 format.
     """
     try:
         if not isinstance(<object>py_object, Resampler):
@@ -511,14 +557,15 @@ cdef _int32_t _yars_input_cb_i32(void * py_object) noexcept:
             raise ValueError('callback must be callable!')
 
         val = <float>(callback(py_self))
-        # Convert to Q1.30
-        qn = <_int32_t>int(val * (2 ** 30))
+        # Convert to Q1.31
+        qn = val * (2. ** 31)
         # Clip to range
-        if qn > 0x7FFFFFFF:
-            qn = 0x7FFFFFFF
-        elif qn < -0x80000000:
-            qn = -0x80000000
-        return qn
+        if qn > (2. ** 31 - 1.):
+            qn = (2. ** 31 - 1.)
+        elif qn < -(2. ** 31):
+            qn = -(2. ** 31)
+
+        return <_int32_t>int(qn)
 
     except Exception as e:
         print(tb.format_exc())
@@ -549,13 +596,14 @@ cdef _int16_t _yars_input_cb_i16(void * py_object) noexcept:
 
         val = <float>(callback(py_self))
         # Convert to Q1.15
-        qn = <_int16_t>int(val * (2 ** 15))
+        qn = val * (2. ** 15)
         # Clip to range
-        if qn > 32767:
-            qn = 32767
-        elif qn < -32768:
-            qn = -32768
-        return qn
+        if qn > (2. ** 15 - 1.):
+            qn = (2. ** 15 - 1.)
+        elif qn < -(2. ** 15):
+            qn = -(2. ** 15)
+
+        return <_int16_t>int(qn)
 
     except Exception as e:
         print(tb.format_exc())
@@ -594,39 +642,48 @@ cdef class Resampler:
         ...     print(out)
     """
 
+    # ---------- Float state and config ----------
     cdef yarsStateF32St state
     cdef yarsCfgF32St cfg
+    cdef float* _poly          # coefficients (allocated)
+    cdef float* _ring          # ring buffer (allocated)
+    cdef int _poly_len         # npoly
+    cdef int _ring_len         # ntaps * YARS_MAX_RATIO
 
-    cdef np.ndarray  _poly
-    cdef float [::1] v_poly
-
-    cdef np.ndarray  _ring
-    cdef float [::1] v_ring
-
-    cdef object _input_cb
-
-    # Fixed-point fields
-    cdef int _mode
-
-    # i32
+    # ---------- I32 state and config ----------
     cdef yarsStateI32St _i32_state
     cdef yarsCfgI32St _i32_cfg
-    cdef np.ndarray _i32_ring
-    cdef _int32_t [::1] _i32_ring_view
-    cdef np.ndarray _i32_poly
-    cdef _int32_t [::1] _i32_poly_view
-    cdef np.ndarray _i32_fd_poly
-    cdef _int8_t [::1] _i32_fd_poly_view
+    cdef _int32_t* _i32_poly
+    cdef _int8_t*  _i32_fd_poly
+    cdef _int32_t* _i32_ring
+    cdef int _i32_poly_len
+    cdef int _i32_ring_len
 
-    # i16
+    # ---------- I16 state and config ----------
     cdef yarsStateI16St _i16_state
     cdef yarsCfgI16St _i16_cfg
-    cdef np.ndarray _i16_ring
-    cdef _int16_t [::1] _i16_ring_view
-    cdef np.ndarray _i16_poly
-    cdef _int16_t [::1] _i16_poly_view
-    cdef np.ndarray _i16_fd_poly
-    cdef _int8_t [::1] _i16_fd_poly_view
+    cdef _int16_t* _i16_poly
+    cdef _int8_t*  _i16_fd_poly
+    cdef _int16_t* _i16_ring
+    cdef int _i16_poly_len
+    cdef int _i16_ring_len
+
+    cdef int _mode
+    cdef object _input_cb
+
+    # --------------------------------------------------------------------------
+    def __cinit__(self, input_cb=None, ratio=1.0, cfg=None, int mode=YARS_F32):
+        """
+        Инициализация указателей нулями (вызывается до __init__).
+        """
+        self._poly = NULL
+        self._ring = NULL
+        self._i32_poly = NULL
+        self._i32_fd_poly = NULL
+        self._i32_ring = NULL
+        self._i16_poly = NULL
+        self._i16_fd_poly = NULL
+        self._i16_ring = NULL
 
     # --------------------------------------------------------------------------
     def __init__(self, input_cb=None, ratio=1.0, cfg=None, int mode=YARS_F32):
@@ -650,83 +707,217 @@ cdef class Resampler:
         self._input_cb = input_cb
         self._mode = mode
 
-        if mode == YARS_I32:
-            # i32 fixed-point
+        cdef:
+            yarsCfgF32St* def_f32_cfg
+            yarsCfgI32St* def_i32_cfg
+            yarsCfgI16St* def_i16_cfg
+            size_t poly_size, ring_size
+            int i
+
+        if mode == YARS_F32:
+            if cfg is not None:
+                # Пользовательская конфигурация
+                self.cfg.fudge  = <float>cfg['fudge']
+                self.cfg.window = <float>cfg['window']
+                self.cfg.ntaps  = <_uint16_t>cfg['ntaps']
+                self.cfg.npoly  = <_uint8_t>len(cfg['poly'])
+                self._poly_len = self.cfg.npoly
+
+                poly_size = self.cfg.npoly * sizeof(float)
+                self._poly = <float*>malloc(poly_size)
+                if not self._poly:
+                    raise MemoryError("Failed to allocate poly memory")
+                # Копируем значения из списка
+                for i, val in enumerate(cfg['poly']):
+                    self._poly[i] = <float>val
+            else:
+                # Используем стандартную конфигурацию
+                def_f32_cfg = &yars_f32_defaults
+                self.cfg = yars_f32_defaults   # копируем структуру
+                self._poly_len = self.cfg.npoly
+                poly_size = self.cfg.npoly * sizeof(float)
+                self._poly = <float*>malloc(poly_size)
+                if not self._poly:
+                    raise MemoryError("Failed to allocate poly memory")
+                memcpy(self._poly, def_f32_cfg.poly, poly_size)
+
+            self.cfg.poly = self._poly
+
+            # Выделяем кольцевой буфер (ntaps * YARS_MAX_RATIO)
+            self._ring_len = self.cfg.ntaps * YARS_MAX_RATIO
+            ring_size = self._ring_len * sizeof(float)
+            self._ring = <float*>malloc(ring_size)
+            if not self._ring:
+                free(self._poly)
+                self._poly = NULL
+                raise MemoryError("Failed to allocate ring buffer")
+            memset(self._ring, 0, ring_size)
+            self.state.ring = self._ring
+
+            # Инициализация состояния
+            self.state.freq_ratio = <float>ratio
+            self.state.phase = 0.0
+            self.state.index = 0
+
+        elif mode == YARS_I32:
             if cfg is not None:
                 fixed = convert_cfg_to_fixed(cfg, target='i32')
-                self._i32_cfg.ntaps = <_uint16_t>cfg['ntaps']
-                self._i32_cfg.npoly = <_uint8_t>len(cfg['poly'])
-                self._i32_cfg.fudge = fixed['fudge']
+                self._i32_cfg.ntaps  = <_uint16_t>cfg['ntaps']
+                self._i32_cfg.npoly  = <_uint8_t>len(cfg['poly'])
+                self._i32_cfg.fudge  = fixed['fudge']
                 self._i32_cfg.fd_fudge = fixed['fd_fudge']
                 self._i32_cfg.window = fixed['window']
                 self._i32_cfg.fd_window = fixed['fd_window']
+                self._i32_poly_len = self._i32_cfg.npoly
 
-                self._i32_poly = np.array(fixed['poly'], dtype=np.int32)
-                self._i32_fd_poly = np.array(fixed['fd_poly'], dtype=np.int8)
-                self._i32_poly_view = self._i32_poly
-                self._i32_fd_poly_view = self._i32_fd_poly
-                self._i32_cfg.poly = &self._i32_poly_view[0]
-                self._i32_cfg.fd_poly = &self._i32_fd_poly_view[0]
+                # Выделяем память под poly и fd_poly
+                poly_size = self._i32_cfg.npoly * sizeof(_int32_t)
+                self._i32_poly = <_int32_t*>malloc(poly_size)
+                if not self._i32_poly:
+                    raise MemoryError("Failed to allocate i32 poly memory")
+                for i, val in enumerate(fixed['poly']):
+                    self._i32_poly[i] = <_int32_t>val
+
+                fd_size = self._i32_cfg.npoly * sizeof(_int8_t)
+                self._i32_fd_poly = <_int8_t*>malloc(fd_size)
+                if not self._i32_fd_poly:
+                    free(self._i32_poly)
+                    self._i32_poly = NULL
+                    raise MemoryError("Failed to allocate i32 fd_poly memory")
+                for i, val in enumerate(fixed['fd_poly']):
+                    self._i32_fd_poly[i] = <_int8_t>val
             else:
+                def_i32_cfg = &yars_i32_defaults
                 self._i32_cfg = yars_i32_defaults
+                self._i32_poly_len = self._i32_cfg.npoly
 
-            # Allocate enlarged ring buffer (ntaps * YARS_MAX_RATIO)
-            self._i32_ring = np.zeros(self._i32_cfg.ntaps * YARS_MAX_RATIO, dtype=np.int32)
-            self._i32_ring_view = self._i32_ring
-            self._i32_state.ring = &self._i32_ring_view[0]
+                poly_size = self._i32_cfg.npoly * sizeof(_int32_t)
+                self._i32_poly = <_int32_t*>malloc(poly_size)
+                if not self._i32_poly:
+                    raise MemoryError("Failed to allocate i32 poly memory")
+                memcpy(self._i32_poly, def_i32_cfg.poly, poly_size)
+
+                fd_size = self._i32_cfg.npoly * sizeof(_int8_t)
+                self._i32_fd_poly = <_int8_t*>malloc(fd_size)
+                if not self._i32_fd_poly:
+                    free(self._i32_poly)
+                    self._i32_poly = NULL
+                    raise MemoryError("Failed to allocate i32 fd_poly memory")
+                memcpy(self._i32_fd_poly, def_i32_cfg.fd_poly, fd_size)
+
+            self._i32_cfg.poly = self._i32_poly
+            self._i32_cfg.fd_poly = self._i32_fd_poly
+
+            # Кольцевой буфер
+            self._i32_ring_len = self._i32_cfg.ntaps * YARS_MAX_RATIO
+            ring_size = self._i32_ring_len * sizeof(_int32_t)
+            self._i32_ring = <_int32_t*>malloc(ring_size)
+            if not self._i32_ring:
+                free(self._i32_poly)
+                free(self._i32_fd_poly)
+                self._i32_poly = NULL
+                self._i32_fd_poly = NULL
+                raise MemoryError("Failed to allocate i32 ring buffer")
+            memset(self._i32_ring, 0, ring_size)
+            self._i32_state.ring = self._i32_ring
+
             self._i32_state.freq_ratio = <_int32_t>int(ratio * (2 ** 24))
             self._i32_state.phase = 0
             self._i32_state.index = 0
 
-        elif mode == YARS_I16:
-            # i16 fixed-point
+        else:  # mode == YARS_I16
             if cfg is not None:
                 fixed = convert_cfg_to_fixed(cfg, target='i16')
-                self._i16_cfg.ntaps = <_uint16_t>cfg['ntaps']
-                self._i16_cfg.npoly = <_uint8_t>len(cfg['poly'])
-                self._i16_cfg.fudge = fixed['fudge']
+                self._i16_cfg.ntaps  = <_uint16_t>cfg['ntaps']
+                self._i16_cfg.npoly  = <_uint8_t>len(cfg['poly'])
+                self._i16_cfg.fudge  = fixed['fudge']
                 self._i16_cfg.fd_fudge = fixed['fd_fudge']
                 self._i16_cfg.window = fixed['window']
                 self._i16_cfg.fd_window = fixed['fd_window']
+                self._i16_poly_len = self._i16_cfg.npoly
 
-                self._i16_poly = np.array(fixed['poly'], dtype=np.int16)
-                self._i16_fd_poly = np.array(fixed['fd_poly'], dtype=np.int8)
-                self._i16_poly_view = self._i16_poly
-                self._i16_fd_poly_view = self._i16_fd_poly
-                self._i16_cfg.poly = &self._i16_poly_view[0]
-                self._i16_cfg.fd_poly = &self._i16_fd_poly_view[0]
+                poly_size = self._i16_cfg.npoly * sizeof(_int16_t)
+                self._i16_poly = <_int16_t*>malloc(poly_size)
+                if not self._i16_poly:
+                    raise MemoryError("Failed to allocate i16 poly memory")
+                for i, val in enumerate(fixed['poly']):
+                    self._i16_poly[i] = <_int16_t>val
+
+                fd_size = self._i16_cfg.npoly * sizeof(_int8_t)
+                self._i16_fd_poly = <_int8_t*>malloc(fd_size)
+                if not self._i16_fd_poly:
+                    free(self._i16_poly)
+                    self._i16_poly = NULL
+                    raise MemoryError("Failed to allocate i16 fd_poly memory")
+                for i, val in enumerate(fixed['fd_poly']):
+                    self._i16_fd_poly[i] = <_int8_t>val
             else:
+                def_i16_cfg = &yars_i16_defaults
                 self._i16_cfg = yars_i16_defaults
+                self._i16_poly_len = self._i16_cfg.npoly
 
-            # Allocate enlarged ring buffer
-            self._i16_ring = np.zeros(self._i16_cfg.ntaps * YARS_MAX_RATIO, dtype=np.int16)
-            self._i16_ring_view = self._i16_ring
-            self._i16_state.ring = &self._i16_ring_view[0]
+                poly_size = self._i16_cfg.npoly * sizeof(_int16_t)
+                self._i16_poly = <_int16_t*>malloc(poly_size)
+                if not self._i16_poly:
+                    raise MemoryError("Failed to allocate i16 poly memory")
+                memcpy(self._i16_poly, def_i16_cfg.poly, poly_size)
+
+                fd_size = self._i16_cfg.npoly * sizeof(_int8_t)
+                self._i16_fd_poly = <_int8_t*>malloc(fd_size)
+                if not self._i16_fd_poly:
+                    free(self._i16_poly)
+                    self._i16_poly = NULL
+                    raise MemoryError("Failed to allocate i16 fd_poly memory")
+                memcpy(self._i16_fd_poly, def_i16_cfg.fd_poly, fd_size)
+
+            self._i16_cfg.poly = self._i16_poly
+            self._i16_cfg.fd_poly = self._i16_fd_poly
+
+            self._i16_ring_len = self._i16_cfg.ntaps * YARS_MAX_RATIO
+            ring_size = self._i16_ring_len * sizeof(_int16_t)
+            self._i16_ring = <_int16_t*>malloc(ring_size)
+            if not self._i16_ring:
+                free(self._i16_poly)
+                free(self._i16_fd_poly)
+                self._i16_poly = NULL
+                self._i16_fd_poly = NULL
+                raise MemoryError("Failed to allocate i16 ring buffer")
+            memset(self._i16_ring, 0, ring_size)
+            self._i16_state.ring = self._i16_ring
+
             self._i16_state.freq_ratio = <_int32_t>int(ratio * (2 ** 24))
             self._i16_state.phase = 0
             self._i16_state.index = 0
 
-        else:
-            # Floating-point (default)
-            if cfg is not None:
-                self.cfg.fudge    = <float>(cfg['fudge'])
-                self.cfg.window   = <float>(cfg['window'])
-                self.cfg.ntaps    = <_uint16_t>(cfg['ntaps'])
-                self.cfg.npoly   = <_uint8_t>len(cfg['poly'])
+    # --------------------------------------------------------------------------
+    def __dealloc__(self):
+        """Освобождение выделенной памяти."""
+        if self._ring:
+            free(self._ring)
+            self._ring = NULL
+        if self._poly:
+            free(self._poly)
+            self._poly = NULL
 
-                self._poly = cfg['poly'].astype(np.float32)
-                self.v_poly = self._poly
-                self.cfg.poly = &self.v_poly[0]
-            else:
-                self.cfg = yars_f32_defaults
+        if self._i32_ring:
+            free(self._i32_ring)
+            self._i32_ring = NULL
+        if self._i32_poly:
+            free(self._i32_poly)
+            self._i32_poly = NULL
+        if self._i32_fd_poly:
+            free(self._i32_fd_poly)
+            self._i32_fd_poly = NULL
 
-            # Allocate enlarged ring buffer
-            self._ring = np.zeros(self.cfg.ntaps * YARS_MAX_RATIO, dtype=np.float32)
-            self.v_ring = self._ring
-            self.state.ring = &self.v_ring[0]
-            self.state.freq_ratio = <float>ratio
-            self.state.phase = 0.0
-            self.state.index = 0
+        if self._i16_ring:
+            free(self._i16_ring)
+            self._i16_ring = NULL
+        if self._i16_poly:
+            free(self._i16_poly)
+            self._i16_poly = NULL
+        if self._i16_fd_poly:
+            free(self._i16_fd_poly)
+            self._i16_fd_poly = NULL
 
     # --------------------------------------------------------------------------
     def __call__(self):
@@ -748,7 +939,7 @@ cdef class Resampler:
         if self._mode == YARS_I32:
             qn_out = yars_i32_run(&self._i32_cfg, &self._i32_state,
                                   _yars_input_cb_i32, <void *>self)
-            return <float>qn_out / (2 ** 30)
+            return <float>qn_out / (2 ** 31)
         elif self._mode == YARS_I16:
             qn_out = yars_i16_run(&self._i16_cfg, &self._i16_state,
                                   _yars_input_cb_i16, <void *>self)

@@ -29,6 +29,8 @@
 #define _YARS_ONE_Q24  (1 << 24)
 #define _YARS_TWO_Q24  (1 << 25)
 
+#define _YARS_ONE_Q48  (((uint64_t)1) << 48)
+
 /*===========================================================================*/
 /*                          Floating‑point (f32)                            */
 /*===========================================================================*/
@@ -86,6 +88,17 @@ float yars_f32_run(YARS_CONST yarsCfgF32St * cfg,
         state->phase -= 1.0f;
     }
 
+    /* Clamp the frequency ratio (f_in / f_out) to avoid excessive decimation */
+    if (state->freq_ratio < 2.0f / cfg->ntaps)
+    {
+        state->freq_ratio = 2.0f / cfg->ntaps;
+    }
+
+    if (state->freq_ratio > YARS_MAX_RATIO)
+    {
+        state->freq_ratio = YARS_MAX_RATIO;
+    }
+
     /* Compute adaptive filter parameters */
     float rinc = (state->freq_ratio > 1.0f) ? state->freq_ratio : 1.0f;
     float step = 1.0f / rinc;
@@ -100,18 +113,12 @@ float yars_f32_run(YARS_CONST yarsCfgF32St * cfg,
     for (k = 0; k <= 2 * d; k++)
     {
         float phase = start_phase + (float)k * step;
-        out += yars_f32_weight(cfg, phase) / rinc * state->ring[j];
+        out += yars_f32_weight(cfg, phase) * step * state->ring[j];
 
         if (--j < 0)
         {
             j = ring_size - 1;
         }
-    }
-
-    /* Clamp the frequency ratio (f_in / f_out) to avoid excessive decimation */
-    if (state->freq_ratio < 2.0f / cfg->ntaps)
-    {
-        state->freq_ratio = 2.0f / cfg->ntaps;
     }
 
     /* Advance phase */
@@ -156,12 +163,12 @@ static YARS_CONST int8_t _fd_kaiser_i32_100db[] = {
 };
 
 YARS_CONST yarsCfgI32St yars_i32_defaults = {
-    .poly     = _kaiser_i32_100db,
-    .fd_poly  = _fd_kaiser_i32_100db,
+    .poly      = _kaiser_i32_100db,
+    .fd_poly   = _fd_kaiser_i32_100db,
     .fudge     = 981663008,
     .window    = 55063330,
     .ntaps     = 79,
-    .npoly    = 8,
+    .npoly     = 8,
     .fd_fudge  = 30,
     .fd_window = 31,
 };
@@ -193,9 +200,21 @@ int32_t yars_i32_run(YARS_CONST yarsCfgI32St * cfg,
         state->phase -= _YARS_ONE_Q24;                /* subtract 1.0 */
     }
 
+    /* Clamp the frequency ratio (f_in / f_out) to avoid excessive decimation */
+    int32_t min_freq_ratio = _YARS_TWO_Q24 / cfg->ntaps;  /* 2/ntaps in Q8.24 */
+    if (state->freq_ratio < min_freq_ratio)
+    {
+        state->freq_ratio = min_freq_ratio;
+    }
+
+    if (state->freq_ratio > YARS_MAX_RATIO * _YARS_ONE_Q24)
+    {
+        state->freq_ratio = YARS_MAX_RATIO * _YARS_ONE_Q24;
+    }
+
     /* Compute adaptive filter parameters in Q8.24 */
     int64_t rinc_q24 = (state->freq_ratio > _YARS_ONE_Q24) ? state->freq_ratio : _YARS_ONE_Q24;
-    int64_t step_q24 = (((int64_t)1)<<48) / rinc_q24;
+    int64_t step_q24 = _YARS_ONE_Q48 / rinc_q24;
 
     int32_t d = mul_2pwr64(((int64_t)cfg->ntaps - 1) * rinc_q24, -25);
     int32_t start_phase = mul_2pwr64((state->phase - mul_2pwr64(d, 24)) * step_q24, -24);
@@ -207,25 +226,19 @@ int32_t yars_i32_run(YARS_CONST yarsCfgI32St * cfg,
     for (k = 0; k <= 2 * d; k++)
     {
         int32_t phase = start_phase + k * step_q24;   /* Q8.24 */
-        acc += _yars_i32_weight_calc(cfg, phase) * state->ring[j] / rinc_q24;  /* Q2.30 * Q1.31 / Q8.24 */
+        int64_t w = mul_2pwr64(_yars_i32_weight_calc(cfg, phase) * step_q24, -24); /* Q2.30 */
+        acc +=  w * state->ring[j];  /* Q2.30 * Q1.31 */
         if (--j < 0)
         {
             j = ring_size - 1;
         }
     }
 
-    /* Clamp the frequency ratio (f_in / f_out) to avoid excessive decimation */
-    int32_t min_freq_ratio = _YARS_TWO_Q24 / cfg->ntaps;  /* 2/ntaps in Q8.24 */
-    if (state->freq_ratio < min_freq_ratio)
-    {
-        state->freq_ratio = min_freq_ratio;
-    }
-
     /* Advance phase */
     state->phase += state->freq_ratio;
 
-    /* Normalize by rinc and convert to Q1.31 */
-    int64_t out = mul_2pwr64(acc, -6);
+    /* Convert to Q1.31 */
+    int64_t out = mul_2pwr64(acc, -30);
 
     if (out >= INT32_MAX)
     {
@@ -245,14 +258,14 @@ int32_t yars_i32_run(YARS_CONST yarsCfgI32St * cfg,
 
 /* ---- Kaiser window coefficients for i16 (100 dB) ---- */
 #define _KAISER_I16_100DB \
-X(0,  -13015, 15)     \
-X(1,   19085, 13)     \
-X(2,  -26459, 12)     \
-X(3,   22943, 11)     \
-X(4,  -26905, 11)     \
-X(5,   20949, 11)     \
-X(6,  -19528, 12)     \
-X(7,   32767, 15)
+X(0,  -13015, 15)         \
+X(1,   19085, 13)         \
+X(2,  -26459, 12)         \
+X(3,   22943, 11)         \
+X(4,  -26905, 11)         \
+X(5,   20949, 11)         \
+X(6,  -19528, 12)         \
+X(7,   16383, 14)
 
 /* Helper enum for coefficient identification */
 #define _KAISER_I16_ID(i) _KAISER_I16_ID_##i
@@ -278,13 +291,13 @@ static YARS_CONST int8_t _fd_kaiser_i16_100db[] = {
 
 /* Default configuration for i16 */
 YARS_CONST yarsCfgI16St yars_i16_defaults = {
-    .poly     = _kaiser_i16_100db_poly,
-    .fd_poly  = _fd_kaiser_i16_100db,
-    .fudge    = 981663008,      /* 0.9142449 in Q30 */
-    .window   = 55063330,       /* 0.05128 in Q31   */
-    .ntaps    = 79,
-    .npoly    = 8,
-    .fd_fudge = 30,
+    .poly      = _kaiser_i16_100db_poly,
+    .fd_poly   = _fd_kaiser_i16_100db,
+    .fudge     = 985905728,      /* 0.9142449 in Q30 */
+    .window    = 55063332,       /* 0.05128 in Q31   */
+    .ntaps     = 79,
+    .npoly     = 8,
+    .fd_fudge  = 30,
     .fd_window = 31
 };
 
@@ -315,28 +328,6 @@ int16_t yars_i16_run(YARS_CONST yarsCfgI16St * cfg,
         state->phase -= _YARS_ONE_Q24;                /* subtract 1.0 */
     }
 
-    /* Compute adaptive filter parameters in Q8.24 */
-    int64_t rinc_q24 = (state->freq_ratio > _YARS_ONE_Q24) ? state->freq_ratio : _YARS_ONE_Q24;
-    int64_t step_q24 = (((int64_t)1)<<48) / rinc_q24;
-
-    int32_t d   = mul_2pwr64(((int64_t)cfg->ntaps - 1) * rinc_q24, -25);
-    int32_t start_phase = mul_2pwr64((state->phase - mul_2pwr64(d, 24)) * step_q24, -24);
-
-    /* Filtering */
-    int32_t acc = 0;  /* Use 64-bit accumulator to avoid overflow */
-    int16_t j = state->index;
-
-    for (k = 0; k <= 2 * d; k++)
-    {
-        int32_t phase = start_phase + k * (int32_t)step_q24;   /* Q8.24 */
-        int32_t delta = _yars_i16_weight_calc(cfg, phase) * state->ring[j]; /* Q1.15 * Q1.15 = Q.2.30*/
-        acc += mul_2pwr64(delta, 24) / rinc_q24;  /* Q2.30 * Q8.24 / * Q8.24 */
-        if (--j < 0)
-        {
-            j = ring_size - 1;
-        }
-    }
-
     /* Clamp the frequency ratio (f_in / f_out) to avoid excessive decimation */
     int32_t min_freq_ratio = _YARS_TWO_Q24 / cfg->ntaps;  /* 2/ntaps in Q8.24 */
     if (state->freq_ratio < min_freq_ratio)
@@ -344,20 +335,48 @@ int16_t yars_i16_run(YARS_CONST yarsCfgI16St * cfg,
         state->freq_ratio = min_freq_ratio;
     }
 
+    if (state->freq_ratio > YARS_MAX_RATIO * _YARS_ONE_Q24)
+    {
+        state->freq_ratio = YARS_MAX_RATIO * _YARS_ONE_Q24;
+    }
+
+
+    /* Compute adaptive filter parameters in Q8.24 */
+    int64_t rinc_q24 = (state->freq_ratio > _YARS_ONE_Q24) ? state->freq_ratio : _YARS_ONE_Q24;
+    int64_t step_q24 = _YARS_ONE_Q48 / rinc_q24;
+
+    int32_t d = mul_2pwr64(((int64_t)cfg->ntaps - 1) * rinc_q24, -25);
+    int32_t start_phase = mul_2pwr64((state->phase - mul_2pwr64(d, 24)) * step_q24, -24);
+
+    /* Filtering */
+    int64_t acc = 0;  /* Use 64-bit accumulator to avoid overflow */
+    int16_t j = state->index;
+
+    for (k = 0; k <= 2 * d; k++)
+    {
+        int32_t phase = start_phase + k * step_q24;   /* Q8.24 */
+        /* Q2.14 * Q8.24 (<=1.0) -> Q2.14 */
+        int64_t w = mul_2pwr64(((int64_t)_yars_i16_weight_calc(cfg, phase)) * step_q24, -24);
+        acc +=  ((int32_t)w) * ((int32_t)state->ring[j]); /* Q2.14 * Q1.15 */
+        if (--j < 0)
+        {
+            j = ring_size - 1;
+        }
+    }
+
     /* Advance phase */
     state->phase += state->freq_ratio;
 
-    /* Normalize by rinc and convert to Q1.15 */
-    int64_t out = mul_2pwr32(acc, -15); /* Q1.15 */;
+    int32_t out = mul_2pwr32(acc, -14);
 
-    if (out >= INT16_MAX)
-    {
-        out = INT16_MAX;
-    }
-    if (out <= INT16_MIN)
-    {
-        out = INT16_MIN;
-    }
+     if (out >= INT16_MAX)
+     {
+         out = INT16_MAX;
+     }
+     if (out <= INT16_MIN)
+     {
+         out = INT16_MIN;
+     }
 
     return (int16_t)out;
 }

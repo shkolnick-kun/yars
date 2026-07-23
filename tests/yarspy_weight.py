@@ -63,8 +63,9 @@ res = minimize(error, np.array([1.0, 0.0]))
 config['poly'] *= res.x[0]
 config['poly'][-1] += res.x[1]
 
-y = yarspy.weight(x_test, config, use_fixed=True)
-e = y_test - y
+y = yarspy.weight(x_test, config, mode=yarspy.YARS_I16)
+#y = yarspy.weight(x_test, mode=yarspy.YARS_I16)
+e = y - y_test
 
 print("\nValidation errors:")
 print(np.max(e), np.min(e))

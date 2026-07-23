@@ -42,9 +42,9 @@ import yarspy
 
 N = 1000
 
-f  = 8.
+f  = 8
 px = np.array([0.001 * i for i in range(N)]) * f
-x = np.sin(2 * np.pi * px)
+x = 0.999 * np.sin(2 * np.pi * px)
 
 cur = 0
 def _input_cb(*args):
@@ -56,7 +56,7 @@ def _input_cb(*args):
     cur += 1
     return ret
 
-ratio = 9.5
+ratio = 0.1
 
 resample_x = yarspy.Resampler(_input_cb, ratio, mode=yarspy.YARS_I16)
 
